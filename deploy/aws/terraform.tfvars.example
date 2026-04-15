@@ -1,0 +1,21 @@
+region           = "us-east-1"
+domain           = "clinicaltrial.mcp.blencorp.com"
+hosted_zone_name = "blencorp.com"
+image_tag        = "v0.1.0-alpha.0"
+desired_count    = 2
+cpu              = 512
+memory           = 1024
+
+# Required: your Clerk Frontend API / JWT issuer URL.
+clerk_issuer = "https://clerk.blencorp.com"
+
+# Optional overrides.
+# clerk_jwks_url = "https://clerk.blencorp.com/.well-known/jwks.json"
+# scopes_supported = "ctgov.read"
+
+# Lock to Anthropic IP ranges. When enabling this for the directory listing,
+# make sure `anthropic_cidrs` is up to date.
+allow_anthropic_ingress_only = true
+anthropic_cidrs = [
+  "160.79.104.0/23"
+]
