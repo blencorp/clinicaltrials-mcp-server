@@ -1,4 +1,4 @@
-<video src="./assets/launch.mp4" controls width="600"></video>
+<video src="assets/launch.mp4" controls width="600"></video>
 
 # ClinicalTrials.gov Explorer (by BLEN)
 
