@@ -1,0 +1,175 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "ClinicalTrials.gov REST API (pinned subset)",
+    "version": "2.0.4-pinned",
+    "description": "Hand-curated snapshot of the ClinicalTrials.gov v2 REST API. Replace by running `pnpm regen:sdk` in an environment with network access. Upstream source: https://clinicaltrials.gov/api/v2/openapi.json"
+  },
+  "servers": [
+    { "url": "https://clinicaltrials.gov/api/v2" }
+  ],
+  "paths": {
+    "/studies": {
+      "get": {
+        "operationId": "searchStudies",
+        "summary": "Search studies",
+        "description": "Returns data of studies matching query and filter parameters. Results are paged via pageToken.",
+        "parameters": [
+          { "name": "query.cond", "in": "query", "schema": { "type": "string" }, "description": "Conditions or diseases (Essie expression). Example: `lung cancer`." },
+          { "name": "query.term", "in": "query", "schema": { "type": "string" }, "description": "Free-text term across all study fields." },
+          { "name": "query.locn", "in": "query", "schema": { "type": "string" }, "description": "Location filter (city, state, country)." },
+          { "name": "query.titles", "in": "query", "schema": { "type": "string" }, "description": "Title, official title, brief title search." },
+          { "name": "query.intr", "in": "query", "schema": { "type": "string" }, "description": "Interventions / treatment." },
+          { "name": "query.outc", "in": "query", "schema": { "type": "string" }, "description": "Outcome measures." },
+          { "name": "query.spons", "in": "query", "schema": { "type": "string" }, "description": "Sponsor / collaborator." },
+          { "name": "query.lead", "in": "query", "schema": { "type": "string" }, "description": "Lead sponsor name." },
+          { "name": "query.id", "in": "query", "schema": { "type": "string" }, "description": "Study IDs (NCT, secondary)." },
+          { "name": "query.patient", "in": "query", "schema": { "type": "string" }, "description": "PatientSearch area (AND of symptom, condition)." },
+          { "name": "filter.overallStatus", "in": "query", "schema": { "type": "array", "items": { "type": "string", "enum": ["RECRUITING","NOT_YET_RECRUITING","ACTIVE_NOT_RECRUITING","COMPLETED","TERMINATED","SUSPENDED","WITHDRAWN","UNKNOWN","ENROLLING_BY_INVITATION","NO_LONGER_AVAILABLE","APPROVED_FOR_MARKETING","AVAILABLE","TEMPORARILY_NOT_AVAILABLE"] } }, "style": "form", "explode": false, "description": "Filter by overall status (pipe-separated)." },
+          { "name": "filter.geo", "in": "query", "schema": { "type": "string" }, "description": "`distance(lat,lon,dist)` filter, e.g. `distance(39.0,-77.1,50mi)`." },
+          { "name": "filter.ids", "in": "query", "schema": { "type": "array", "items": { "type": "string" } }, "description": "NCT IDs to restrict to." },
+          { "name": "filter.advanced", "in": "query", "schema": { "type": "string" }, "description": "Essie expression over any field, e.g. `AREA[StartDate]RANGE[2020-01-01, MAX]`." },
+          { "name": "postFilter.overallStatus", "in": "query", "schema": { "type": "array", "items": { "type": "string" } }, "description": "Post-filter (applied after aggregation stats)." },
+          { "name": "aggFilters", "in": "query", "schema": { "type": "string" }, "description": "Aggregation filters (UI-style)." },
+          { "name": "geoDecay", "in": "query", "schema": { "type": "string" }, "description": "`func(dist,offset,scale,weight)` decay function for geo." },
+          { "name": "fields", "in": "query", "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": false, "description": "Field projection (dotted paths). E.g. `NCTId,BriefTitle,OverallStatus`." },
+          { "name": "sort", "in": "query", "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": false, "description": "Sort keys. E.g. `LastUpdatePostDate:desc,EnrollmentCount`." },
+          { "name": "countTotal", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Include totalCount in response." },
+          { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 0, "maximum": 1000, "default": 10 } },
+          { "name": "pageToken", "in": "query", "schema": { "type": "string" }, "description": "Opaque pagination token returned from previous page." },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json","csv"], "default": "json" } },
+          { "name": "markupFormat", "in": "query", "schema": { "type": "string", "enum": ["markdown","legacy"], "default": "markdown" } }
+        ],
+        "responses": {
+          "200": { "description": "Studies page", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StudiesPage" } } } }
+        }
+      }
+    },
+    "/studies/{nctId}": {
+      "get": {
+        "operationId": "getStudy",
+        "summary": "Fetch a single study by NCT ID",
+        "parameters": [
+          { "name": "nctId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^NCT[0-9]{8}$" } },
+          { "name": "fields", "in": "query", "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": false },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json","csv","fhir.json","ris"], "default": "json" } },
+          { "name": "markupFormat", "in": "query", "schema": { "type": "string", "enum": ["markdown","legacy"], "default": "markdown" } }
+        ],
+        "responses": {
+          "200": { "description": "Study", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Study" } } } },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/studies/metadata": {
+      "get": {
+        "operationId": "getStudiesMetadata",
+        "summary": "Field metadata for all study data points",
+        "parameters": [
+          { "name": "includeIndexedOnly", "in": "query", "schema": { "type": "boolean", "default": false } },
+          { "name": "includeHistoricOnly", "in": "query", "schema": { "type": "boolean", "default": false } }
+        ],
+        "responses": { "200": { "description": "Field metadata", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/FieldNode" } } } } } }
+      }
+    },
+    "/studies/search-areas": {
+      "get": {
+        "operationId": "getSearchAreas",
+        "summary": "Named search areas (Essie) and the fields they cover",
+        "responses": { "200": { "description": "Search areas", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/SearchArea" } } } } } }
+      }
+    },
+    "/studies/enums": {
+      "get": {
+        "operationId": "getEnums",
+        "summary": "Enum definitions used in study fields",
+        "responses": { "200": { "description": "Enums", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/EnumDef" } } } } } }
+      }
+    },
+    "/stats/size": {
+      "get": {
+        "operationId": "getSizeStats",
+        "summary": "Byte-size histogram of all study JSON documents",
+        "responses": { "200": { "description": "Size stats" } }
+      }
+    },
+    "/stats/field/values": {
+      "get": {
+        "operationId": "getFieldValueStats",
+        "summary": "Top value statistics for given fields",
+        "parameters": [
+          { "name": "fields", "in": "query", "required": true, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": false },
+          { "name": "types", "in": "query", "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": false }
+        ],
+        "responses": { "200": { "description": "Field value stats" } }
+      }
+    },
+    "/stats/field/sizes": {
+      "get": {
+        "operationId": "getFieldSizeStats",
+        "summary": "List-size statistics for given list-valued fields",
+        "parameters": [
+          { "name": "fields", "in": "query", "required": true, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": false }
+        ],
+        "responses": { "200": { "description": "Field size stats" } }
+      }
+    },
+    "/version": {
+      "get": {
+        "operationId": "getVersion",
+        "summary": "API and data version information",
+        "responses": { "200": { "description": "Version info" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "StudiesPage": {
+        "type": "object",
+        "properties": {
+          "studies": { "type": "array", "items": { "$ref": "#/components/schemas/Study" } },
+          "nextPageToken": { "type": "string" },
+          "totalCount": { "type": "integer" }
+        }
+      },
+      "Study": {
+        "type": "object",
+        "description": "Top-level study object. Sections are opt-in via `fields`.",
+        "properties": {
+          "protocolSection": { "type": "object" },
+          "derivedSection": { "type": "object" },
+          "resultsSection": { "type": "object" },
+          "annotationSection": { "type": "object" },
+          "documentSection": { "type": "object" },
+          "hasResults": { "type": "boolean" }
+        }
+      },
+      "FieldNode": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "piece": { "type": "string" },
+          "type": { "type": "string" },
+          "rules": { "type": "string" },
+          "description": { "type": "string" },
+          "children": { "type": "array", "items": { "$ref": "#/components/schemas/FieldNode" } }
+        }
+      },
+      "SearchArea": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "parts": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "weight": { "type": "number" }, "fields": { "type": "array", "items": { "type": "string" } } } } }
+        }
+      },
+      "EnumDef": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "pieces": { "type": "array", "items": { "type": "string" } },
+          "values": { "type": "array", "items": { "type": "object", "properties": { "value": { "type": "string" }, "legacyValue": { "type": "string" } } } }
+        }
+      }
+    }
+  }
+}
