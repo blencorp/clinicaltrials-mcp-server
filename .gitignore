@@ -49,6 +49,9 @@ terraform.tfvars
 # Local agent / tool state
 .claude/
 
+# Local media / experiments
+video/
+
 # OS
 .DS_Store
 Thumbs.db
