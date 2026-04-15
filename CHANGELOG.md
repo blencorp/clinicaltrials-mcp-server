@@ -5,6 +5,18 @@ All notable changes will be documented here. Versioning follows
 
 ## [Unreleased]
 
+### Added
+
+- **IP rate limiter**: per-IP token-bucket (`src/server/ipRateLimiter.ts`)
+  applied to `/mcp` and `/as/*` before auth runs. Caps unauthenticated
+  flood traffic at 5 rps / 20 burst per IP by default (tunable via
+  `CTGOV_IP_RPS` / `CTGOV_IP_BURST`). Returns 429 with `Retry-After`.
+- **`CTGOV_TRUST_PROXY`** env var. Set to `1` when behind a known reverse
+  proxy (Railway, Cloudflare, ALB) so the limiter reads the first
+  `x-forwarded-for` hop.
+- **Railway deploy guide** in `README.md` as an alternative to the AWS
+  Terraform module. Reuses `deploy/Dockerfile` unchanged.
+
 ## 0.1.0-alpha.0 — 2026-04-14
 
 Initial alpha, tracked on `claude/plan-clinicaltrial-mcp-rdxY1`.

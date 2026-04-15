@@ -4,13 +4,13 @@
   "description": "MCP server for ClinicalTrials.gov (by Blen). Unaffiliated with NIH/NLM.",
   "license": "MIT",
   "author": "Blen <opensource@blencorp.com>",
-  "homepage": "https://github.com/blencorp/claude-playground",
+  "homepage": "https://github.com/blencorp/clinicaltrial-mcp-server",
   "repository": {
     "type": "git",
-    "url": "https://github.com/blencorp/claude-playground.git"
+    "url": "https://github.com/blencorp/clinicaltrial-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/blencorp/claude-playground/issues",
+    "url": "https://github.com/blencorp/clinicaltrial-mcp-server/issues",
     "email": "opensource@blencorp.com"
   },
   "keywords": [

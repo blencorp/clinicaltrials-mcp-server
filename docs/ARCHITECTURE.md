@@ -67,6 +67,7 @@ flowchart TD
 | User code → host | V8 isolate (or Deno `--allow-none` subprocess), no net/fs/env/ffi |
 | User code → direct escape hatches | acorn AST preflight rejects imports, eval, host-bridge access, and unsafe prototype/property chains before execution |
 | Incoming HTTP | OAuth 2.1 PKCE + audience-bound JWT, RFC 9728 PRM, optional WAFv2 allow-list |
+| Pre-auth flood control | `IpRateLimiter` — per-IP token bucket on `/mcp` + `/as/*` (5 rps / 20 burst default), runs before JWT verification |
 | Per-subject fair use | SubjectQuota (60 execute/min, 600 upstream/min) |
 | Global upstream fair use | 10 rps token bucket (CT.gov documented limit) |
 | Upstream credential leakage | Credentials live only in the supervisor's HttpClient; the sandbox never sees them |

@@ -24,6 +24,7 @@ import {
   isSessionSubjectAuthorized,
   requiredResourceScopes,
 } from "./authz.js";
+import { IpRateLimiter, clientIp } from "./ipRateLimiter.js";
 
 export interface HttpServerOptions {
   port?: number;
@@ -146,6 +147,10 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
       : "unavailable";
   const quota = new SubjectQuota();
   const embeddedAs = authConfig.provider === "embedded" ? buildEmbeddedAs(authConfig) : null;
+  const ipLimiter = new IpRateLimiter({
+    ratePerSec: Number(process.env.CTGOV_IP_RPS ?? 5),
+    burst: Number(process.env.CTGOV_IP_BURST ?? 20),
+  });
 
   if (!authAdapter && !opts.insecure) {
     throw new Error(
@@ -159,6 +164,18 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
     try {
+      // Per-IP rate limit for authenticated and AS endpoints. Health checks
+      // stay free so platform probes aren't affected.
+      if (url.pathname.startsWith("/mcp") || url.pathname.startsWith("/as/")) {
+        const ip = clientIp(req);
+        const retryAfter = ipLimiter.check(ip);
+        if (retryAfter !== null) {
+          res.setHeader("retry-after", String(retryAfter));
+          sendJson(res, 429, { error: "rate_limited", retryAfter });
+          return;
+        }
+      }
+
       // Health
       if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) {
         sendJson(res, 200, { ok: true, executor: executorLabel, auth: authAdapter ? authConfig.provider : "off" });
