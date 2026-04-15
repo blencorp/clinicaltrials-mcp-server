@@ -275,20 +275,18 @@ pnpm start                  # node dist/bin.js (stdio)
 
 ## Architecture at a glance
 
-```
-Transport (stdio | Streamable HTTP + OAuth)
-        │
-        ▼
-  buildMcpServer → tools: search_api, describe_schema, execute
-        │
-        ▼
-  SubjectQuota (per-sub + global 10 rps) → HttpClient
-  (undici, LRU, retry, zod, audit, stale-cache fallback)
-        │                                │
-        ▼                                ▼
-   Sandbox (isolated-vm | deno)     ClinicalTrials.gov v2
-   AST allow-list (acorn)
-   ctgov.* SDK via RPC only
+```mermaid
+flowchart TD
+    Transport["Transport<br/>stdio &#124; Streamable HTTP + OAuth"]
+    Server["buildMcpServer<br/>tools: search_api, describe_schema, execute"]
+    Supervisor["SubjectQuota (per-sub + global 10 rps)<br/>HttpClient: undici, LRU, retry, zod, audit, stale-cache"]
+    Sandbox["Sandbox (isolated-vm &#124; deno)<br/>AST allow-list (acorn)<br/>ctgov.* SDK via RPC only"]
+    CTGov[("ClinicalTrials.gov v2")]
+
+    Transport --> Server
+    Server --> Supervisor
+    Supervisor --> Sandbox
+    Supervisor --> CTGov
 ```
 
 Details in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).

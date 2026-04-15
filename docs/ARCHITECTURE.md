@@ -6,42 +6,37 @@ ClinicalTrials.gov v2 API through three tools (`search_api`,
 writes a short TypeScript body, we run it in a sandbox, and the sandbox's
 only outbound path is a supervisor-backed `ctgov.*` SDK.
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│                            Transport layer                            │
-│                                                                       │
-│  stdio (local / Claude Desktop)       Streamable HTTP (hosted)        │
-│       StdioServerTransport         StreamableHTTPServerTransport      │
-│            (no auth)                    + Clerk / WorkOS / Auth0      │
-│                                         + embedded AS (self-host)     │
-│                    │                             │                    │
-│                    └───────┬─────────────────────┘                    │
-│                            ▼                                          │
-│                    buildMcpServer(opts)                               │
-│                    tools: search_api, describe_schema, execute        │
-│                            │                                          │
-│                            ▼                                          │
-│                     SubjectQuota (per-sub + global 10 rps)            │
-│                            │                                          │
-│                            ▼                                          │
-│        ┌──────────── Supervisor ───────────────┐                      │
-│        │ HttpClient (undici + LRU + retries +  │                      │
-│        │ zod validation + audit trace)         │                      │
-│        └────────────────┬──────────────────────┘                      │
-│                         │                                             │
-│                         ▼                                             │
-│                ClinicalTrials.gov v2                                  │
-│                                                                       │
-│        ┌──────────── Sandbox ───────────────┐                         │
-│        │ isolated-vm (primary)              │                         │
-│        │ deno subprocess (fallback)         │                         │
-│        │ AST allow-list (acorn)             │                         │
-│        └────────────────┬───────────────────┘                         │
-│                         │ RPC only                                    │
-│                         ▼                                             │
-│                  ctgov.* SDK shim (bindings.ts)                       │
-│                  calls __host.rpc(method, args)                       │
-└───────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph TransportLayer["Transport layer"]
+        direction LR
+        Stdio["stdio (local / Claude Desktop)<br/>StdioServerTransport<br/><i>no auth</i>"]
+        Http["Streamable HTTP (hosted)<br/>StreamableHTTPServerTransport<br/>+ Clerk / WorkOS / Auth0<br/>+ embedded AS (self-host)"]
+    end
+
+    Server["<b>buildMcpServer(opts)</b><br/>tools: search_api, describe_schema, execute"]
+    Quota["SubjectQuota<br/>(per-sub + global 10 rps)"]
+
+    subgraph SupervisorBox["Supervisor"]
+        HttpClient["HttpClient<br/>undici + LRU + retries<br/>+ zod validation + audit trace"]
+    end
+
+    CTGov[("ClinicalTrials.gov v2")]
+
+    subgraph SandboxBox["Sandbox"]
+        Isolate["isolated-vm (primary)<br/>deno subprocess (fallback)<br/>AST allow-list (acorn)"]
+    end
+
+    Shim["ctgov.* SDK shim (bindings.ts)<br/>calls __host.rpc(method, args)"]
+
+    Stdio --> Server
+    Http --> Server
+    Server --> Quota
+    Quota --> HttpClient
+    HttpClient --> CTGov
+    Server -.dispatches execute.-> Isolate
+    Isolate -->|RPC only| Shim
+    Shim --> HttpClient
 ```
 
 ## Data flow (single `execute` call)
