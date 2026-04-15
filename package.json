@@ -1,0 +1,91 @@
+{
+  "name": "@blen/clinicaltrial-mcp-server",
+  "version": "0.1.0-alpha.0",
+  "description": "MCP server for ClinicalTrials.gov (by Blen). Unaffiliated with NIH/NLM.",
+  "license": "MIT",
+  "author": "Blen <opensource@blencorp.com>",
+  "homepage": "https://github.com/blencorp/claude-playground",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blencorp/claude-playground.git"
+  },
+  "bugs": {
+    "url": "https://github.com/blencorp/claude-playground/issues",
+    "email": "opensource@blencorp.com"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "clinicaltrials",
+    "clinical-trials",
+    "code-mode",
+    "anthropic",
+    "claude"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "clinicaltrial-mcp-server": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "legal"
+  ],
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/bin.ts",
+    "start": "node dist/bin.js",
+    "mcpb:prepare": "tsx scripts/mcpb.ts prepare",
+    "mcpb:validate": "tsx scripts/mcpb.ts validate",
+    "mcpb:pack": "tsx scripts/mcpb.ts pack",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "regen:sdk": "tsx scripts/regenerate-sdk.ts",
+    "verify:schema": "tsx scripts/verify-pinned-schema.ts",
+    "check:directory": "tsx scripts/check-directory-compliance.ts",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "acorn": "^8.12.1",
+    "acorn-walk": "^8.3.4",
+    "jose": "^5.9.6",
+    "lru-cache": "^11.0.2",
+    "undici": "^6.20.1",
+    "zod": "^3.23.8"
+  },
+  "optionalDependencies": {
+    "isolated-vm": "^5.0.1"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
+    "@types/node": "^22.7.5",
+    "@typescript-eslint/eslint-plugin": "^8.8.1",
+    "@typescript-eslint/parser": "^8.8.1",
+    "eslint": "^9.12.0",
+    "nock": "^14.0.0-beta.16",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

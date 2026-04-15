@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+coverage/
+.tsbuildinfo
+*.tsbuildinfo
+
+# Test / tooling caches
+.vitest/
+.cache/
+tmp/
+
+# MCPB build artifacts
+.mcpb/
+*.mcpb
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# Local tfvars (keep examples and shared vars)
+*.auto.tfvars
+terraform.tfvars
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local agent / tool state
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
