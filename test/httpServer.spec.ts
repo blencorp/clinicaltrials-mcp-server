@@ -24,6 +24,15 @@ describe.skipIf(!isAnySandboxAvailable())("HTTP transport (insecure mode)", () =
     expect(j.ok).toBe(true);
   });
 
+  it("GET /health returns 200 with status and timestamp", async () => {
+    const r = await fetch(`${base}/health`);
+    expect(r.status).toBe(200);
+    const j = (await r.json()) as { status: string; timestamp: string };
+    expect(j.status).toBe("ok");
+    expect(typeof j.timestamp).toBe("string");
+    expect(Number.isNaN(Date.parse(j.timestamp))).toBe(false);
+  });
+
   it("GET /.well-known/oauth-protected-resource returns PRM", async () => {
     const r = await fetch(`${base}/.well-known/oauth-protected-resource`);
     expect(r.status).toBe(200);

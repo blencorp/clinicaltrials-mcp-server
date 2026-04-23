@@ -177,6 +177,10 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
       }
 
       // Health
+      if (req.method === "GET" && url.pathname === "/health") {
+        sendJson(res, 200, { status: "ok", timestamp: new Date().toISOString() });
+        return;
+      }
       if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) {
         sendJson(res, 200, { ok: true, executor: executorLabel, auth: authAdapter ? authConfig.provider : "off" });
         return;
