@@ -1,14 +1,8 @@
-name: deploy
+name: deploy (aws ecs - manual only)
 
+# Auto-deploy disabled: Railway is the primary deploy target (see railway.json).
+# This workflow remains for emergency manual AWS pushes via the Actions tab.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "schema/**"
-      - "deploy/Dockerfile"
-      - "package.json"
-      - "pnpm-lock.yaml"
   workflow_dispatch:
 
 permissions:
