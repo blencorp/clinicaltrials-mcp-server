@@ -161,7 +161,15 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
   const server = createServer(async (req, res) => {
     const traceId = randomUUID();
     res.setHeader("x-trace-id", traceId);
-    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    } catch {
+      // Malformed request-target (e.g. bot scanners sending "//evil.txt").
+      // Reject early without crashing the process.
+      sendPlain(res, 400, "bad request");
+      return;
+    }
 
     try {
       // Per-IP rate limit for authenticated and AS endpoints. Health checks
