@@ -6,6 +6,29 @@ export const SearchApiInput = z.object({
   k: z.number().int().min(1).max(25).optional(),
 });
 
+/**
+ * Canonical example prepended to every search_api snippet so the model writes
+ * `ctgov.studies.search(...)` with the correct flat dotted-key shape that the
+ * upstream API and our zod schema both require. The most common failure mode
+ * without this is the model guessing nested `{query:{cond}, filter:{...}}`,
+ * which the SDK rejects with `unrecognized_keys`.
+ */
+const SDK_CALL_PRIMER = `// Quick reference — the ctgov SDK uses *flat dotted keys* (mirrors the v2 REST API).
+// Pass them as string keys; do NOT nest under a "query" or "filter" object.
+//
+//   const page = await ctgov.studies.search({
+//     "query.cond": "lung cancer",          // condition
+//     "query.term": "phase 3",              // free text
+//     "filter.overallStatus": ["RECRUITING"],
+//     "filter.geo": "distance(42.36,-71.06,50mi)",  // lat,lon,radius
+//     pageSize: 20,
+//     fields: ["NCTId","BriefTitle","OverallStatus","Phase","LocationFacility"],
+//   });
+//   return page.studies;
+//
+// Use ctgov.studies.searchAll(params) when you need all pages.
+`;
+
 export interface SearchApiResult {
   query: string;
   hits: Array<
@@ -29,6 +52,7 @@ export function runSearchApi(input: z.infer<typeof SearchApiInput>): SearchApiRe
 
   const snippetParts: string[] = [];
   snippetParts.push("// Top matches for: " + JSON.stringify(input.query));
+  snippetParts.push(SDK_CALL_PRIMER);
   for (const hit of hits) {
     if (hit.kind === "endpoint") {
       snippetParts.push(hit.endpoint.tsSlice);

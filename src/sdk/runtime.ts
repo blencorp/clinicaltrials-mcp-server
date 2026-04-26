@@ -11,6 +11,35 @@ import {
   type FieldSizeStatsParamsT,
 } from "../supervisor/validation.js";
 import { CtGovError } from "../supervisor/errors.js";
+import { z } from "zod";
+
+/**
+ * Reformat a zod error from `StudiesSearchParams.parse` into a hint-bearing
+ * CtGovError. The most common LLM-authored mistake is nesting under a `query`
+ * or `filter` object — the upstream API uses flat dotted keys. Catch that
+ * specific shape and surface a one-line fix instead of a stack trace.
+ */
+function rethrowSearchParamsError(err: unknown): never {
+  if (err instanceof z.ZodError) {
+    const offenders = err.issues
+      .filter(
+        (i) => i.code === "unrecognized_keys" && i.path.length === 0,
+      )
+      .flatMap((i) =>
+        (i as z.ZodIssue & { keys?: string[] }).keys ?? [],
+      )
+      .filter((k) => k === "query" || k === "filter" || k === "postFilter");
+    if (offenders.length > 0) {
+      throw new CtGovError(
+        "VALIDATION_ERROR",
+        `studies.search() uses flat dotted keys, not nested objects. ` +
+          `Replace { ${offenders.join(", ")}: { ... } } with string keys like ` +
+          `"query.cond", "query.term", "filter.overallStatus", "filter.geo".`,
+      );
+    }
+  }
+  throw err;
+}
 
 export interface Study {
   protocolSection?: Record<string, unknown>;
@@ -87,7 +116,12 @@ export class CtGovRuntime {
     const self = this;
     return {
       async search(params): Promise<StudiesPage> {
-        const parsed = StudiesSearchParams.parse(params);
+        let parsed: StudiesSearchParamsT;
+        try {
+          parsed = StudiesSearchParams.parse(params);
+        } catch (err) {
+          rethrowSearchParamsError(err);
+        }
         return self.http.get<StudiesPage>({
           path: "/studies",
           query: parsed as Record<string, unknown>,
@@ -95,6 +129,11 @@ export class CtGovRuntime {
         });
       },
       searchAll(params, opts): AsyncIterable<Study> {
+        try {
+          StudiesSearchParams.parse(params);
+        } catch (err) {
+          rethrowSearchParamsError(err);
+        }
         const maxPages = Math.min(opts?.maxPages ?? 10, 100);
         const pageSize = opts?.pageSize ?? 100;
         return (async function* gen() {
