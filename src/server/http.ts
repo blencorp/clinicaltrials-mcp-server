@@ -194,14 +194,24 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
         return;
       }
 
-      // RFC 9728 Protected Resource Metadata
+      // RFC 9728 Protected Resource Metadata — only when auth is on.
+      // For unauthenticated public deployments (provider=none / --insecure),
+      // there is no protected resource to advertise; return 404.
       if (req.method === "GET" && url.pathname === "/.well-known/oauth-protected-resource") {
+        if (!authAdapter) {
+          sendJson(res, 404, { error: "no protected resource configured" });
+          return;
+        }
         sendJson(res, 200, protectedResourceMetadata(authConfig));
         return;
       }
 
-      // RFC 8414 AS Metadata
+      // RFC 8414 AS Metadata — only when auth is on.
       if (req.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
+        if (!authAdapter) {
+          sendJson(res, 404, { error: "no authorization server configured" });
+          return;
+        }
         if (embeddedAs) {
           sendJson(res, 200, embeddedAs.metadata());
           return;

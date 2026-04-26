@@ -33,12 +33,11 @@ describe.skipIf(!isAnySandboxAvailable())("HTTP transport (insecure mode)", () =
     expect(Number.isNaN(Date.parse(j.timestamp))).toBe(false);
   });
 
-  it("GET /.well-known/oauth-protected-resource returns PRM", async () => {
+  it("GET /.well-known/oauth-protected-resource returns 404 in insecure mode", async () => {
+    // No protected resource is advertised when auth is off (public listing
+    // posture). Operators who enable auth will see a 200 PRM here.
     const r = await fetch(`${base}/.well-known/oauth-protected-resource`);
-    expect(r.status).toBe(200);
-    const j = (await r.json()) as Record<string, unknown>;
-    expect(j.resource).toBeTruthy();
-    expect(Array.isArray(j.scopes_supported)).toBe(true);
+    expect(r.status).toBe(404);
   });
 
   it("POST /mcp initialize + tools/list succeeds in insecure mode", async () => {
