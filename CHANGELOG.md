@@ -7,6 +7,10 @@ All notable changes will be documented here. Versioning follows
 
 ### Added
 
+- **MCP tool annotations** on every tool (`title`, `readOnlyHint: true`,
+  `destructiveHint: false`, `idempotentHint: true`, `openWorldHint`) so the
+  catalog matches Anthropic's connector review criteria. Tool descriptions
+  now also reference the upstream ClinicalTrials.gov v2 API documentation.
 - **IP rate limiter**: per-IP token-bucket (`src/server/ipRateLimiter.ts`)
   applied to `/mcp` and `/as/*` before auth runs. Caps unauthenticated
   flood traffic at 5 rps / 20 burst per IP by default (tunable via
@@ -16,6 +20,30 @@ All notable changes will be documented here. Versioning follows
   `x-forwarded-for` hop.
 - **Railway deploy guide** in `README.md` as an alternative to the AWS
   Terraform module. Reuses `deploy/Dockerfile` unchanged.
+
+### Changed
+
+- **OAuth well-known endpoints are 404 in unauthenticated mode**
+  (`--insecure` / `provider=none`). Previously they always returned a PRM
+  document referencing an authorization server that did not exist, which
+  broke MCP clients probing the metadata. Auth-enabled deployments still
+  serve PRM (RFC 9728) and AS metadata (RFC 8414) at the conventional paths.
+- **Privacy policy** rewritten to match the public Railway no-auth posture
+  (no OAuth identity collected on the public listing). The auth-on
+  self-hosted path is documented as a separate section so operators have an
+  accurate reference.
+- **Submission packet** (`legal/submission-packet.md`) refreshed as a
+  narrative pitch with the connector's code-mode novelty, five worked
+  examples, and an explicit map to every Anthropic review criterion.
+
+### Fixed
+
+- **Hostname / repo URL drift**: every reference to the singular
+  `clinicaltrial.mcp.blencorp.com` host and `blencorp/clinicaltrial-mcp-server`
+  repo path now matches the deployed plural form
+  (`clinicaltrials.mcp.blencorp.com`,
+  `https://github.com/blencorp/clinicaltrials-mcp-server`). The npm package
+  name stays `@blen/clinicaltrial-mcp-server` for publish stability.
 
 ## 0.1.0-alpha.0 — 2026-04-14
 
