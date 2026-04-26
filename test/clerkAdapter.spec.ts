@@ -10,7 +10,7 @@ let jwksUrl: string;
 let privateKey: KeyLike;
 let keyId: string;
 const issuer = "https://fake.issuer.test";
-const audience = "https://clinicaltrial.mcp.blencorp.com/mcp";
+const audience = "https://clinicaltrials.mcp.blencorp.com/mcp";
 
 async function signToken(
   claims: Record<string, unknown>,

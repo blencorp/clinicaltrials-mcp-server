@@ -11,9 +11,9 @@ export function protectedResourceMetadata(cfg: AuthConfig): Record<string, unkno
     bearer_methods_supported: ["header"],
     scopes_supported: cfg.scopesSupported,
     resource_documentation:
-      "https://github.com/blencorp/claude-playground/blob/main/legal/privacy-policy.md",
+      "https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/privacy-policy.md",
     resource_policy_uri:
-      "https://github.com/blencorp/claude-playground/blob/main/legal/terms.md",
+      "https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/terms.md",
     resource_name: "ClinicalTrials.gov Explorer (by BLEN)",
   };
 }

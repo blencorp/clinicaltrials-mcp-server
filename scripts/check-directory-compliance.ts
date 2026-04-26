@@ -10,7 +10,7 @@
  *   - legal/{privacy-policy,terms,support}.md present
  *
  * Usage:
- *   pnpm check:directory https://clinicaltrial.mcp.blencorp.com
+ *   pnpm check:directory https://clinicaltrials.mcp.blencorp.com
  */
 import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";

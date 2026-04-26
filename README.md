@@ -355,7 +355,7 @@ All configuration is via environment variables. Copy
 | `CTGOV_AUTH_PROVIDER` | `none` | `clerk` / `workos` / `auth0` / `generic-oidc` / `embedded` / `none`. |
 | `CTGOV_AUTH_ISSUER` | *(none)* | Authorization server URL. Required when provider ≠ `none`. |
 | `CTGOV_AUTH_JWKS_URL` | *derived* | Defaults to `${issuer}/.well-known/jwks.json` (or `${issuer}/as/jwks.json` for `embedded`). |
-| `CTGOV_AUTH_RESOURCE` | `https://clinicaltrial.mcp.blencorp.com/mcp` | RFC 8707 audience / our `resource` identifier. |
+| `CTGOV_AUTH_RESOURCE` | `https://clinicaltrials.mcp.blencorp.com/mcp` | RFC 8707 audience / our `resource` identifier. |
 | `CTGOV_AUTH_SCOPES` | `ctgov.read` | Whitespace- or comma-separated list. |
 
 ### Network / rate limiting
@@ -417,7 +417,7 @@ OAuth Authorization Server in front.
 ```bash
 export CTGOV_AUTH_PROVIDER=clerk
 export CTGOV_AUTH_ISSUER=https://clerk.blencorp.com
-export CTGOV_AUTH_RESOURCE=https://clinicaltrial.mcp.blencorp.com/mcp
+export CTGOV_AUTH_RESOURCE=https://clinicaltrials.mcp.blencorp.com/mcp
 export CTGOV_AUTH_SCOPES=ctgov.read
 node dist/bin.js --http --port 8080
 ```
@@ -425,7 +425,7 @@ node dist/bin.js --http --port 8080
 Clerk (or WorkOS / Auth0 / any OIDC AS) must be configured with
 [RFC 7591 Dynamic Client Registration](https://datatracker.ietf.org/doc/html/rfc7591)
 so Claude can self-register, and the audience / resource set to
-`https://clinicaltrial.mcp.blencorp.com/mcp` (RFC 8707).
+`https://clinicaltrials.mcp.blencorp.com/mcp` (RFC 8707).
 
 ### With the built-in embedded AS (self-host)
 
@@ -461,7 +461,7 @@ Terraform module at [`deploy/aws/`](./deploy/aws/README.md) stands up:
 
 **ECS Fargate + ALB + ACM + Route 53 + Secrets Manager + CloudWatch Logs + WAFv2**
 
-on `clinicaltrial.mcp.blencorp.com`, with a GitHub Actions OIDC deployer role.
+on `clinicaltrials.mcp.blencorp.com`, with a GitHub Actions OIDC deployer role.
 The container is built from [`deploy/Dockerfile`](./deploy/Dockerfile)
 (multi-stage, non-root, tini, isolated-vm compiled in).
 
@@ -494,14 +494,14 @@ the custom domain, and sets `PORT` + `x-forwarded-for` for you.
 
 1. **Create a service** pointing at this repo. Railway detects the Dockerfile
    at `deploy/Dockerfile` (set the Dockerfile path in service settings).
-2. **Custom domain** — add `clinicaltrial.mcp.blencorp.com` and point the
+2. **Custom domain** — add `clinicaltrials.mcp.blencorp.com` and point the
    CNAME from your DNS provider to the Railway target.
 3. **Environment variables**:
 
    ```bash
    CTGOV_AUTH_PROVIDER=clerk
    CTGOV_AUTH_ISSUER=https://clerk.blencorp.com
-   CTGOV_AUTH_RESOURCE=https://clinicaltrial.mcp.blencorp.com/mcp
+   CTGOV_AUTH_RESOURCE=https://clinicaltrials.mcp.blencorp.com/mcp
    CTGOV_AUTH_SCOPES=ctgov.read
    CTGOV_TRUST_PROXY=1     # required — Railway is a reverse proxy
    CTGOV_IP_RPS=5          # optional tuning

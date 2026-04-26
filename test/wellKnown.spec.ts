@@ -8,7 +8,7 @@ import type { AuthConfig } from "../src/auth/config.js";
 
 const base: AuthConfig = {
   provider: "clerk",
-  resource: "https://clinicaltrial.mcp.blencorp.com/mcp",
+  resource: "https://clinicaltrials.mcp.blencorp.com/mcp",
   issuer: "https://clerk.blencorp.com",
   scopesSupported: ["ctgov.read"],
 };
@@ -16,7 +16,7 @@ const base: AuthConfig = {
 describe("protectedResourceMetadata (RFC 9728)", () => {
   it("emits required fields", () => {
     const doc = protectedResourceMetadata(base);
-    expect(doc.resource).toBe("https://clinicaltrial.mcp.blencorp.com/mcp");
+    expect(doc.resource).toBe("https://clinicaltrials.mcp.blencorp.com/mcp");
     expect(doc.authorization_servers).toEqual(["https://clerk.blencorp.com"]);
     expect(doc.bearer_methods_supported).toContain("header");
     expect(doc.scopes_supported).toEqual(["ctgov.read"]);
@@ -27,9 +27,9 @@ describe("wwwAuthenticateHeader", () => {
   it("includes resource_metadata pointing at the well-known URL", () => {
     const h = wwwAuthenticateHeader(base);
     expect(h).toMatch(/^Bearer /);
-    expect(h).toContain(`realm="https://clinicaltrial.mcp.blencorp.com/mcp"`);
+    expect(h).toContain(`realm="https://clinicaltrials.mcp.blencorp.com/mcp"`);
     expect(h).toContain(
-      `resource_metadata="https://clinicaltrial.mcp.blencorp.com/.well-known/oauth-protected-resource"`,
+      `resource_metadata="https://clinicaltrials.mcp.blencorp.com/.well-known/oauth-protected-resource"`,
     );
   });
 });

@@ -14,7 +14,7 @@ export interface ClerkAdapterOptions {
   jwksUrl?: string;
   /**
    * The `aud` (audience) the token must bind to. Per RFC 8707 this should be
-   * our MCP resource identifier, e.g. "https://clinicaltrial.mcp.blencorp.com/mcp".
+   * our MCP resource identifier, e.g. "https://clinicaltrials.mcp.blencorp.com/mcp".
    */
   audience: string;
   /**

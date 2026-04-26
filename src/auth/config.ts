@@ -31,7 +31,7 @@ export interface AuthConfig {
  */
 export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
   const provider = (env.CTGOV_AUTH_PROVIDER as AuthProvider | undefined) ?? "none";
-  const resource = env.CTGOV_AUTH_RESOURCE ?? "https://clinicaltrial.mcp.blencorp.com/mcp";
+  const resource = env.CTGOV_AUTH_RESOURCE ?? "https://clinicaltrials.mcp.blencorp.com/mcp";
   const issuer = env.CTGOV_AUTH_ISSUER ?? "";
   const scopesSupported = (env.CTGOV_AUTH_SCOPES ?? "ctgov.read").split(/[\s,]+/).filter(Boolean);
 

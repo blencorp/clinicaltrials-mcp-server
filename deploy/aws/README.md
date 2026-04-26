@@ -1,10 +1,10 @@
-# AWS deployment — `clinicaltrial.mcp.blencorp.com`
+# AWS deployment — `clinicaltrials.mcp.blencorp.com`
 
 Terraform module that stands up the hosted remote MCP server on:
 
 - **Amazon ECS on Fargate** — long-lived HTTP/SSE workload, platform version `LATEST` (1.4.0+).
 - **Application Load Balancer** — HTTPS listener on 443 with ACM cert (DNS‑validated in Route 53).
-- **AWS Certificate Manager** — public cert for `clinicaltrial.mcp.blencorp.com`.
+- **AWS Certificate Manager** — public cert for `clinicaltrials.mcp.blencorp.com`.
 - **Amazon Route 53** — `A`/`AAAA` alias records on the zone for `blencorp.com`.
 - **AWS Secrets Manager** — holds Clerk signing metadata injected into the task as env.
 - **Amazon CloudWatch Logs** — structured JSON logs at `/ecs/clinicaltrial-mcp-server` (30‑day retention).
@@ -20,7 +20,7 @@ repo that this module creates.
 2. A Clerk application configured with:
    - Frontend API / JWT issuer URL (e.g. `https://clerk.blencorp.com`).
    - DCR (Dynamic Client Registration) enabled for MCP clients.
-   - The audience/resource set to `https://clinicaltrial.mcp.blencorp.com/mcp` (RFC 8707).
+   - The audience/resource set to `https://clinicaltrials.mcp.blencorp.com/mcp` (RFC 8707).
 3. Terraform ≥ 1.7, AWS provider ≥ 5.70, AWS CLI v2 authenticated.
 4. Docker + BuildKit for the image build.
 
@@ -29,7 +29,7 @@ repo that this module creates.
 | Variable | Default | Notes |
 |---|---|---|
 | `region` | `us-east-1` | Any region that supports Fargate 1.4. |
-| `domain` | `clinicaltrial.mcp.blencorp.com` | FQDN the cert + DNS record use. |
+| `domain` | `clinicaltrials.mcp.blencorp.com` | FQDN the cert + DNS record use. |
 | `hosted_zone_name` | `blencorp.com` | Route 53 zone that owns `domain`. |
 | `image_tag` | `v0.1.0-alpha.0` | Image tag in ECR. |
 | `desired_count` | `2` | ECS service task count. |

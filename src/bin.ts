@@ -57,7 +57,7 @@ function printHelp(): void {
       "HTTP auth (required unless --insecure):",
       "  CTGOV_AUTH_PROVIDER=clerk",
       "  CTGOV_AUTH_ISSUER=https://<tenant>.clerk.accounts.dev",
-      "  CTGOV_AUTH_RESOURCE=https://clinicaltrial.mcp.blencorp.com/mcp",
+      "  CTGOV_AUTH_RESOURCE=https://clinicaltrials.mcp.blencorp.com/mcp",
       "  CTGOV_AUTH_SCOPES=ctgov.read",
     ].join("\n"),
   );

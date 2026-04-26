@@ -7,7 +7,7 @@ variable "region" {
 variable "domain" {
   description = "Public hostname of the MCP server (must match ACM cert)."
   type        = string
-  default     = "clinicaltrial.mcp.blencorp.com"
+  default     = "clinicaltrials.mcp.blencorp.com"
 }
 
 variable "hosted_zone_name" {

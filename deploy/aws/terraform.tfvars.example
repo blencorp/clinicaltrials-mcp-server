@@ -1,5 +1,5 @@
 region           = "us-east-1"
-domain           = "clinicaltrial.mcp.blencorp.com"
+domain           = "clinicaltrials.mcp.blencorp.com"
 hosted_zone_name = "blencorp.com"
 image_tag        = "v0.1.0-alpha.0"
 desired_count    = 2

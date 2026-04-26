@@ -11,7 +11,7 @@ beforeAll(async () => {
   // tests only exercise the "no token" 401 and "obviously-invalid token" paths.
   process.env.CTGOV_AUTH_PROVIDER = "clerk";
   process.env.CTGOV_AUTH_ISSUER = "https://fake.issuer.test";
-  process.env.CTGOV_AUTH_RESOURCE = "https://clinicaltrial.mcp.blencorp.com/mcp";
+  process.env.CTGOV_AUTH_RESOURCE = "https://clinicaltrials.mcp.blencorp.com/mcp";
   process.env.CTGOV_AUTH_SCOPES = "ctgov.read";
   process.env.CTGOV_AUTH_JWKS_URL = "https://fake.issuer.test/.well-known/jwks.json";
 
@@ -41,7 +41,7 @@ describe.skipIf(!isAnySandboxAvailable())("HTTP transport (secure mode)", () => 
     expect(wa).toBeTruthy();
     expect(wa).toContain(`Bearer`);
     expect(wa).toContain(
-      `resource_metadata="https://clinicaltrial.mcp.blencorp.com/.well-known/oauth-protected-resource"`,
+      `resource_metadata="https://clinicaltrials.mcp.blencorp.com/.well-known/oauth-protected-resource"`,
     );
   });
 
@@ -54,7 +54,7 @@ describe.skipIf(!isAnySandboxAvailable())("HTTP transport (secure mode)", () => 
     const r = await fetch(`${base}/.well-known/oauth-protected-resource`);
     expect(r.status).toBe(200);
     const j = (await r.json()) as { resource: string; authorization_servers: string[] };
-    expect(j.resource).toBe("https://clinicaltrial.mcp.blencorp.com/mcp");
+    expect(j.resource).toBe("https://clinicaltrials.mcp.blencorp.com/mcp");
     expect(j.authorization_servers).toEqual(["https://fake.issuer.test"]);
   });
 });
