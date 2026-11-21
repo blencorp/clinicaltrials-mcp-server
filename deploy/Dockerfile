@@ -1,21 +1,16 @@
 # syntax=docker/dockerfile:1.7
 # ---- Build stage -----------------------------------------------------------
-FROM node:22-bookworm-slim AS build
+# isolated-vm 7 ships prebuilt binaries for Node 24/26 (glibc and musl), so no compiler
+# toolchain is needed.
+# Base images are pinned by digest; Dependabot (docker ecosystem) proposes digest bumps.
+FROM node:26-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS build
 WORKDIR /app
 
-# Build tools + python required by isolated-vm's node-gyp.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential \
-      python3 \
-      ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PNPM_HOME=/pnpm
-ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+# Node 25+ no longer bundles corepack; install the pnpm that package.json "packageManager" pins.
+RUN npm install -g --ignore-scripts pnpm@12.21.0
 
 # Install deps and build.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json tsconfig.build.json ./
@@ -23,7 +18,7 @@ COPY src ./src
 COPY schema ./schema
 RUN pnpm build
 
-# Prune to production-only modules (keeps the compiled isolated-vm .node).
+# Prune to production-only modules (keeps the prebuilt isolated-vm .node).
 RUN pnpm prune --prod
 
 # ---- Deno: the process-isolated sandbox for authenticated HTTP serving ------
@@ -32,12 +27,10 @@ RUN pnpm prune --prod
 FROM denoland/deno:bin-2.9.8@sha256:b507583d3c68ba69f3ed2ce5969ae5b8b70f43421c781279c7aea06435263543 AS deno
 
 # ---- Runtime stage ---------------------------------------------------------
-FROM node:22-bookworm-slim AS runtime
+FROM node:26-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS runtime
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      tini \
-      ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates dumb-init \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 1001 --home /app --shell /usr/sbin/nologin ctgov
 
@@ -63,5 +56,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # The image's default is the public hosting mode: anonymous and docs-only (no execute), so it starts
 # safely with no auth configured and does not depend on a platform start command (Railway stops
 # reading railway.json on 2026-12-01). With auth configured, run it with `--http` instead.
-ENTRYPOINT ["/usr/bin/tini", "--", "node", "dist/bin.js"]
+ENTRYPOINT ["dumb-init", "--", "node", "dist/bin.js"]
 CMD ["--http", "--public-docs"]
