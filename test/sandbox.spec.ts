@@ -123,6 +123,16 @@ describe.each([new IsolateRunner(), new DenoRunner()])('$kind runner contract', 
     expect(res).toMatchObject(expected);
   });
 
+  it('runs many SDK calls at once (Promise.all), in order, up to the pending-call cap', async ({ skip }) => {
+    if (!(await runner.available())) return skip();
+    const res = await run('const r = await Promise.all(Array.from({ length: 100 }, (_, i) => ctgov.studies.search({ pageSize: i }))); return r.map(x => x.args[0].pageSize);');
+    expect(res).toMatchObject({ ok: true, value: Array.from({ length: 100 }, (_, i) => i) });
+    // A bridge that answers slowly keeps every call pending, so the 101st is refused.
+    const slow = { dispatch: () => new Promise<{ ok: true; value: number }>(r => setTimeout(() => r({ ok: true, value: 1 }), 300)) };
+    const over = await runner.execute({ code: 'const r = await Promise.allSettled(Array.from({ length: 101 }, () => ctgov.version())); return r.filter(x => x.status === "rejected").map(x => x.reason.name);', bindings: ['ctgov'], timeoutMs: 5000 }, slow);
+    expect(over).toMatchObject({ ok: true, value: ['TooManyPendingCalls'] });
+  });
+
   it('enforces the wall-clock deadline for an unresolved promise and for a CPU loop', async ({ skip }) => {
     if (!(await runner.available())) return skip();
     for (const code of ['await new Promise(() => {}); return 42', 'while (true) {}']) {
@@ -359,6 +369,12 @@ describe('deno runner isolation (gated on availability)', () => {
     expect(res).toMatchObject({ t: 'done', ok: true, json: JSON.stringify(Array(8).fill('undefined')) });
   });
 
+  it('cannot call eval or the Function constructor, however the name is built (no preflight)', async ({ skip }) => {
+    if (!(await runner.available())) return skip();
+    const res = await superviseDirectly('const out = []; for (const f of [() => globalThis["ev" + "al"]("1 + 1"), () => globalThis["Func" + "tion"]("return 1")(), () => (async () => {})["constr" + "uctor"]("return 1")()]) { try { await f(); out.push("ran"); } catch (e) { out.push(e.name); } } return out;');
+    expect(res).toMatchObject({ t: 'done', ok: true, json: JSON.stringify(['EvalError', 'EvalError', 'EvalError']) });
+  });
+
   it('holds against runtime-built names of every host capability, with no preflight at all', async ({ skip }) => {
     if (!(await runner.available())) return skip();
     const res = await superviseDirectly('const names = ["De" + "no", "pro" + "cess", "fe" + "tch", "Wor" + "ker", "postM" + "essage", "self", "setTim" + "eout", "Buf" + "fer"]; return names.map(n => typeof globalThis[n]);');
@@ -424,7 +440,7 @@ async function superviseDirectly(code: string): Promise<Record<string, unknown>>
   const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'ctgov-supervisor-test-'));
   writeFileSync(join(dir, 'supervisor.js'), SUPERVISOR_SOURCE);
-  const child = spawn('deno', ['run', '--no-prompt', '--no-config', '--no-lock', '--no-remote', '--no-npm', '--quiet', join(dir, 'supervisor.js')]);
+  const child = spawn('deno', ['run', '--no-prompt', '--no-config', '--no-lock', '--no-remote', '--no-npm', '--quiet', '--v8-flags=--disallow-code-generation-from-strings', join(dir, 'supervisor.js')]);
   try {
     return await new Promise((resolve, reject) => {
       let token = '', buffered = '';
@@ -458,7 +474,7 @@ async function superviseThenCloseStdin(code: string): Promise<boolean> {
   const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'ctgov-supervisor-test-'));
   writeFileSync(join(dir, 'supervisor.js'), SUPERVISOR_SOURCE);
-  const child = spawn('deno', ['run', '--no-prompt', '--no-config', '--no-lock', '--no-remote', '--no-npm', '--quiet', join(dir, 'supervisor.js')]);
+  const child = spawn('deno', ['run', '--no-prompt', '--no-config', '--no-lock', '--no-remote', '--no-npm', '--quiet', '--v8-flags=--disallow-code-generation-from-strings', join(dir, 'supervisor.js')]);
   try {
     const exit = new Promise<boolean>((resolve) => child.on('exit', () => resolve(true)));
     child.stdout.setEncoding('utf8').once('data', (chunk: string) => {
@@ -510,15 +526,17 @@ describe.each([new IsolateRunner(), new DenoRunner()])('$kind escape attempts', 
   // is on it. Isolated-vm builds code in the isolate's realm; Deno is checked in its own test.
   it('the isolate global holds no host or runtime names', async ({ skip }) => {
     if (runner.kind !== 'isolate' || !(await runner.available())) return skip();
-    const res = await run('const g = (async () => {})["constr" + "uctor"]("return this")(); const names = ["De" + "no", "pro" + "cess", "fe" + "tch", "requi" + "re", "__host_log", "__host_rpc_sync", "set" + "Timeout", "URL"]; return names.map(n => typeof g[n]);');
-    expect(res).toMatchObject({ ok: true, value: Array(8).fill('undefined') });
+    // `(() => {}).constructor` is the plain Function constructor, built from parts the preflight
+    // cannot see; `return this` is then the isolate's real global. The controls (JSON, ctgov are
+    // there) fail the test if the handle is not the global, so "undefined" below means absent.
+    const res = await run('const g = (() => {})["constr" + "uctor"]("return this")(); const names = ["De" + "no", "pro" + "cess", "fe" + "tch", "requi" + "re", "__host_log", "__host_rpc_sync", "set" + "Timeout", "URL", "Buf" + "fer"]; return [typeof g.JSON, typeof g.ctgov, ...names.map(n => typeof g[n])];');
+    expect(res).toMatchObject({ ok: true, value: ['object', 'function', ...Array(9).fill('undefined')] });
   });
 
   // Deno forbids code generation outright (the process runs with --disallow-code-generation-from-strings).
   // Inside isolated-vm the same call builds code in the isolate's own realm, which has nothing to reach.
   it.for([
     ['the Function constructor', 'const c = "constr" + "uctor"; try { return typeof (async () => {})[c][c]("return 1"); } catch (e) { return "blocked:" + e.name; }'],
-    ['eval by a runtime-built name', 'const g = (function () { return this; })() ?? {}; const e = g["ev" + "al"]; try { return e ? String(e("1+1")) : "undefined"; } catch (err) { return "blocked:" + err.name; }'],
   ] as const)('a Deno program cannot build code from a string by %s', async ([, code], { skip }) => {
     if (runner.kind !== 'deno' || !(await runner.available())) return skip();
     const res = await run(code);

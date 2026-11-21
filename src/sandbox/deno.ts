@@ -303,7 +303,11 @@ const LANGUAGE = new Set(['globalThis', 'Infinity', 'NaN', 'undefined', 'eval', 
   'Float64Array', 'Function', 'Int8Array', 'Int16Array', 'Int32Array', 'Iterator', 'Map', 'Number', 'Object', 'Promise',
   'Proxy', 'RangeError', 'ReferenceError', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'SuppressedError', 'Symbol',
   'SyntaxError', 'TypeError', 'Uint8Array', 'Uint8ClampedArray', 'Uint16Array', 'Uint32Array', 'URIError', 'WeakMap',
-  'WeakRef', 'WeakSet', 'Atomics', 'Intl', 'JSON', 'Math', 'Reflect', 'Temporal']);
+  'WeakRef', 'WeakSet', 'Atomics', 'Intl', 'JSON', 'Math', 'Reflect', 'Temporal',
+  // Not language, but Deno 2.9's own message plumbing calls it on the global: with it deleted, a
+  // program with three or more SDK calls pending at once fails with "enqueue is not a function".
+  // It only schedules a microtask in this realm and reaches nothing outside it.
+  'queueMicrotask']);
 const encoder = new TextEncoder(), encode = TextEncoder.prototype.encode, sl = String.prototype.slice;
 // The intrinsic %TypedArray%.prototype.byteLength getter, captured: user code may redefine
 // Uint8Array.prototype.length, but cannot change a getter we already hold.

@@ -79,7 +79,7 @@ describe.each<Case>([['isolate', new IsolateRunner()], ['deno', new DenoRunner()
     const { lb, deps } = await setup({ upstreamRatePerSec: 100_000 }, (_req, res) => { res.setHeader('content-type', 'application/json'); res.end(version); });
     try {
       const res = await execute(input('const r = await Promise.all(Array.from({ length: 100 }, (_, i) => ctgov.studies.get("NCT" + String(i).padStart(8, "0")))); return r.length;', { timeoutMs: 30_000 }), deps);
-      expect(res).toMatchObject({ ok: true, value: 100 });
+      expect(res, JSON.stringify(res)).toMatchObject({ ok: true, value: 100 });
       expect(lb.requests).toHaveLength(100);
     } finally { await lb.close(); }
   });
