@@ -33,19 +33,20 @@ export class CtGovClient {
 
   /** Search studies. Flat dotted keys ("query.cond", "filter.overallStatus"), not nested objects. */
   studiesSearch = (params: unknown = {}) => {
-    const parsed = parseParams(StudiesSearchParams, params, 'studies.search');
+    // An omitted argument arrives from the sandbox as `null` (JSON has no undefined).
+    const parsed = parseParams(StudiesSearchParams, params ?? {}, 'studies.search');
     return this.http.call<StudiesPage>({ path: '/studies', query: parsed as unknown as Record<string, never> });
   };
 
   /** One study by NCT ID, optionally projected with `fields`. */
   studiesGet = (nctId: unknown, opts?: unknown) => {
-    if (opts !== undefined && !isPlainObject(opts)) throw new ValidationError('studies.get: options must be an object');
+    if (opts !== undefined && opts !== null && !isPlainObject(opts)) throw new ValidationError('studies.get: options must be an object');
     const { nctId: id, ...query } = parseParams(StudyGetParams, { ...(opts ?? {}), nctId }, 'studies.get');
     return this.http.call<Study>({ path: `/studies/${encodeURIComponent(id)}`, query: query as Record<string, never> });
   };
 
   studiesMetadata = (opts?: unknown) => {
-    if (opts !== undefined && !isPlainObject(opts)) throw new ValidationError('studies.metadata: options must be an object');
+    if (opts !== undefined && opts !== null && !isPlainObject(opts)) throw new ValidationError('studies.metadata: options must be an object');
     return this.http.call({ path: '/studies/metadata', ...(opts ? { query: opts as Record<string, never> } : {}) });
   };
 

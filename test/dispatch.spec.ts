@@ -39,6 +39,25 @@ describe('RPC method boundary', () => {
     expect(failures).toEqual([]);
   });
 
+  it('treats an omitted trailing argument, which crosses the sandbox as null, like no argument', async () => {
+    const cases: Array<[string, unknown[], string]> = [
+      ['studies.search', [null], '/studies'],
+      ['studies.get', ['NCT04852770', null], '/studies/NCT04852770'],
+      ['studies.metadata', [null], '/studies/metadata'],
+    ];
+    for (const [id, args, path] of cases) {
+      const agent = new MockAgent();
+      agent.disableNetConnect();
+      try {
+        const value = { endpoint: id };
+        agent.get(CTGOV_ORIGIN).intercept({ path: `${API}${path}`, method: 'GET' })
+          .reply(200, value, { headers: { 'content-type': 'application/json' } });
+        const res = await dispatch(buildSdk({ ...config, dispatcher: agent }), { binding: 'ctgov', path: id.split('.'), args });
+        expect(res, id).toEqual({ ok: true, value });
+      } finally { await agent.close(); }
+    }
+  });
+
   it('rejects internal, inherited and removed methods before any upstream access', async () => {
     const agent = new MockAgent();
     agent.disableNetConnect();
