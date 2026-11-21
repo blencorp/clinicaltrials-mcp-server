@@ -52,12 +52,12 @@ These are the defaults. A self-hosted server can change them. See [Self-host](/s
 
 - **ClinicalTrials.gov publishes no rate limit.** The server sends at most 10 requests each second,
   with 8 in flight, for everyone who uses it, and it caches responses for 5 minutes.
-- **3,000 upstream calls an hour for each account.** The count is kept in the database, so it holds
-  across restarts. A call over it fails with `SubjectQuotaExceeded`.
+- **3,000 SDK calls an hour for each account.** Every call a program makes counts, including ones
+  answered from the cache. The count is kept in the database, so it holds across restarts. A call over it fails with `SubjectQuotaExceeded`.
 - **10,000 requests a day for each account** to `/mcp/account`.
 - **2 programs at a time for each account**, and 8 on the whole server. A call over either limit
   fails with `Busy`: try again in a moment.
-- **100 upstream calls in one `execute` run.** A call past it fails with `CallBudgetExceeded`.
+- **100 SDK calls in one `execute` run**, cached or not. A call past it fails with `CallBudgetExceeded`.
 
 [Tools](/reference/tools/#limits-of-one-run) lists the limits of one run.
 

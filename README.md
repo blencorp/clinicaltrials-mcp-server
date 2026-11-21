@@ -118,8 +118,8 @@ ClinicalTrials.gov publishes no rate limit, so the server keeps its own conserva
 
 - every request, from every caller, leaves through one process-wide gate: at most 10 requests per second (`CTGOV_RATE_PER_SEC`) and 8 in flight, with a wait of at most 15 s (`Promise.all` in sandbox code is safe but not faster);
 - on a `429` the gate pauses for the `Retry-After` and the call is retried once (a pause over 30 s fails at once with `RateLimited`); network errors and `5xx` retry up to three times with backoff;
-- one `execute()` may make at most 100 upstream calls (`CTGOV_MAX_CALLS_PER_EXECUTE`, `CallBudgetExceeded`), and an authenticated subject at most 3000 per hour (`CTGOV_SUBJECT_RATE_PER_HOUR`);
-- responses are cached for 5 minutes in memory, so repeated questions do not spend calls;
+- one `execute()` may make at most 100 SDK calls (`CTGOV_MAX_CALLS_PER_EXECUTE`, `CallBudgetExceeded`), and an authenticated subject at most 3000 per hour (`CTGOV_SUBJECT_RATE_PER_HOUR`). Both count every SDK call a program makes, including ones answered from the cache;
+- responses are cached for 5 minutes in memory, so repeated questions do not reach ClinicalTrials.gov again (they still count toward the two budgets above);
 - upstream bodies over 8 MiB fail with `ResponseTooLarge`, and a result over 256 KiB returned from `execute` with `ResultTooLarge`. **Always pass `fields`**: a full study record can be hundreds of KiB.
 
 ## Personal accounts (hosted mode)
