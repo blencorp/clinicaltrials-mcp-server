@@ -53,7 +53,7 @@
     "mcpb:prepare": "tsx scripts/mcpb.ts prepare",
     "mcpb:validate": "tsx scripts/mcpb.ts validate",
     "mcpb:pack": "tsx scripts/mcpb.ts pack",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",

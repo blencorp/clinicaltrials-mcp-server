@@ -82,10 +82,10 @@ function runCommand(
       shell: process.platform === "win32",
     });
     if (options.quietOnSuccess) {
-      child.stdout.on("data", (chunk) => {
+      child.stdout!.on("data", (chunk) => {
         output += chunk.toString("utf8");
       });
-      child.stderr.on("data", (chunk) => {
+      child.stderr!.on("data", (chunk) => {
         output += chunk.toString("utf8");
       });
     }
@@ -135,10 +135,10 @@ async function getLocalDenoVersion(denoPath: string): Promise<string> {
 
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => {
+    child.stdout!.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr!.on("data", (chunk) => {
       stderr += chunk.toString("utf8");
     });
     child.on("error", rejectPromise);
@@ -153,7 +153,7 @@ async function getLocalDenoVersion(denoPath: string): Promise<string> {
         rejectPromise(new Error(`Unexpected Deno version output: ${line}`));
         return;
       }
-      resolvePromise(match[1]);
+      resolvePromise(match[1]!);
     });
   });
 }
@@ -292,7 +292,7 @@ async function bundleDenoTargets(version: string): Promise<McpbDenoTarget[]> {
 
   const bundledTargets: McpbDenoTarget[] = [];
   for (const key of targetKeys) {
-    const target = DENO_TARGETS[key];
+    const target = DENO_TARGETS[key]!;
     const destination = join(STAGE_DIR, relativeDenoPath(target));
     if (key === HOST_TARGET_KEY) {
       await mkdir(dirname(destination), { recursive: true });
