@@ -141,3 +141,33 @@ describe('execution admission', () => {
     expect(await run('ip:4.4.4.4')).toMatchObject({ ok: false, error: { name: 'Busy', message: expect.stringContaining('maximum of 3') } });
   });
 });
+
+describe('an asynchronous per-subject limiter (account mode counts in PostgreSQL)', () => {
+  const ctx = { subject: 'alice' };
+  it('refuses calls with a fixed error when the limiter cannot answer, never letting them through', async () => {
+    const broken = { consume: async () => { throw new Error('connection refused to db.internal:5432'); } };
+    const res = await execute(input, { sdk, sandbox: fakeRunner(1), callBudgets: {}, subjectQuotas: { ctgov: broken } }, ctx) as Out & { value: { ctgov: (R & { error: { message: string } })[] } };
+    expect(res.value.ctgov[0]).toMatchObject({ ok: false, error: { name: 'QuotaUnavailable' } });
+    expect(JSON.stringify(res)).not.toContain('db.internal');
+  });
+  it('applies the verdict: allowed through, refused with the reset time', async () => {
+    let n = 0;
+    const limiter = { consume: async () => ({ allowed: ++n <= 1, resetAt: Date.UTC(2030, 0, 1) }) };
+    const res = await execute(input, { sdk, sandbox: fakeRunner(2), callBudgets: {}, subjectQuotas: { ctgov: limiter } }, ctx) as Out;
+    expect(res.value.ctgov.map(r => r.ok)).toEqual([true, false]);
+    expect(res.value.ctgov[1]).toMatchObject({ error: { name: 'SubjectQuotaExceeded', message: expect.stringContaining('2030-01-01') } });
+  });
+  it('still enforces the call budget on parallel calls while the limiter awaits', async () => {
+    const slow = { consume: async () => { await new Promise(r => setTimeout(r, 20)); return { allowed: true, resetAt: 0 }; } };
+    const parallel: SandboxRunner = {
+      kind: 'unavailable', available: async () => true,
+      async execute(_o: ExecuteOptions, rpc: RpcBridge) {
+        const all = await Promise.all(Array.from({ length: 6 }, () => rpc.dispatch({ binding: 'ctgov', path: ['studies', 'search'], args: [{}] })));
+        return { ok: true, value: all, logs: [], durationMs: 0 };
+      },
+    };
+    const res = await execute(input, { sdk, sandbox: parallel, callBudgets: { ctgov: 3 }, subjectQuotas: { ctgov: slow } }, ctx) as { value: R[] };
+    expect(res.value.filter(r => r.ok)).toHaveLength(3);
+    expect(res.value.filter(r => r.error?.name === 'CallBudgetExceeded')).toHaveLength(3);
+  });
+});

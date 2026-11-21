@@ -88,3 +88,38 @@ describe.skipIf(!built)("built CLI over stdio (dist/bin.js)", () => {
     }
   });
 });
+
+// Hosting modes exclude each other (BIN is the built CLI). Every refusal happens before anything
+// is bound, so none of these needs a database.
+describe.skipIf(!built)("hosting-mode precedence with CTGOV_AUTH_PROVIDER=accounts", () => {
+  const ACCOUNTS = {
+    CTGOV_AUTH_PROVIDER: "accounts", CTGOV_PUBLIC_ORIGIN: "https://ctgov.example.com", BETTER_AUTH_SECRET: "x".repeat(32),
+    DATABASE_URL: "postgres://u:p@127.0.0.1:1/none", GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret",
+  };
+  const run = (args: string[], env: Record<string, string> = ACCOUNTS) =>
+    spawnSync(process.execPath, [BIN, ...args], { encoding: "utf8", env: { ...process.env, CTGOV_LOG_LEVEL: "error", ...env }, timeout: 15_000 });
+
+  it.each([["--public-docs"], ["--insecure"]])("%s with accounts is a startup error", (flag) => {
+    const r = run(["--http", flag]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${flag} cannot be combined with CTGOV_AUTH_PROVIDER=accounts`);
+  });
+  it("accounts without --http is a startup error", () => {
+    const r = run([]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("CTGOV_AUTH_PROVIDER=accounts needs --http");
+  });
+  it("refuses the isolate sandbox and incomplete configuration before binding", () => {
+    const isolate = run(["--http", "--sandbox", "isolate", "--port", "0"]);
+    expect(isolate.status).toBe(1);
+    expect(isolate.stderr).toMatch(/isolate sandbox .* not allowed in account mode/);
+    const missing = run(["--http", "--port", "0"], { ...ACCOUNTS, GOOGLE_CLIENT_SECRET: "" });
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain("Missing configuration: GOOGLE_CLIENT_SECRET");
+  });
+  it("--public-docs with another auth provider stays refused", () => {
+    const withProvider = run(["--http", "--public-docs"], { CTGOV_AUTH_PROVIDER: "clerk", CTGOV_PUBLIC_ORIGIN: "https://ctgov.example.com" });
+    expect(withProvider.status).toBe(1);
+    expect(withProvider.stderr).toContain("cannot be combined with CTGOV_AUTH_PROVIDER=clerk");
+  });
+});
