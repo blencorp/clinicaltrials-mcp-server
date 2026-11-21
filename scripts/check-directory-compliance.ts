@@ -77,7 +77,7 @@ await check("POST /mcp without auth returns 401 + WWW-Authenticate with PRM hint
 await check("3+ example prompts present", async () => {
   const dir = resolve("examples");
   if (!existsSync(dir)) throw new Error("examples/ directory missing");
-  const mds = readdirSync(dir).filter((f) => f.endsWith(".md"));
+  const mds = readdirSync(dir).filter((f) => f.endsWith(".js"));
   if (mds.length < 3) throw new Error(`found ${mds.length}, need >= 3`);
 });
 

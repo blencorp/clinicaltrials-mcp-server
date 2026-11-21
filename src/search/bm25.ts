@@ -1,88 +1,99 @@
 /**
- * Tiny BM25 implementation. Zero deps, deterministic.
+ * Tiny BM25 implementation. No external deps.
  */
-export interface BM25Doc {
+export interface Doc {
   id: string;
   text: string;
-  /** Arbitrary payload returned alongside search results. */
-  payload: unknown;
 }
 
-export interface BM25SearchResult {
+export interface ScoredDoc {
   id: string;
   score: number;
-  payload: unknown;
 }
 
-const K1 = 1.5;
-const B = 0.75;
+const STOP = new Set([
+  'a','an','and','are','as','at','be','by','for','from','has','have','i','in','is','it','its','of','on','or','that',
+  'the','to','was','were','will','with','this','these','those','if','then','than','so','do','does','can','should',
+  // Question words: a whole user question is a common query.
+  'which','what','who','how','did','they','been','me','any','anyone','there','show'
+]);
 
-function tokenize(s: string): string[] {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9_.]+/g, " ")
-      .split(/\s+/)
-      .filter(Boolean)
-  );
+/** 'trials' and 'studies' must find 'trial' and 'study': drop a plural -s (not -ss). */
+function singular(t: string): string {
+  if (t.length > 4 && t.endsWith('ies')) return t.slice(0, -3) + 'y';
+  return t.length > 3 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t;
 }
 
-export class BM25Index {
-  private readonly docs: BM25Doc[] = [];
-  private readonly tokens: string[][] = [];
-  private readonly docFreq = new Map<string, number>();
-  private avgDl = 0;
+export function tokenize(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9_\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t && t.length > 1 && !STOP.has(t))
+    .map(singular)
+    .filter(t => !STOP.has(t));
+}
 
-  add(doc: BM25Doc): void {
+/**
+ * Query tokens without the identifiers a question carries ('NCT04852770'). They say nothing about
+ * which method to call, and their digits would match example values in the corpus. A query that is
+ * only an identifier keeps it: something is better than no hits.
+ */
+export function queryTokens(query: string): string[] {
+  const all = tokenize(query);
+  const terms = all.filter(t => !/^nct\d{8}$/.test(t));
+  return terms.length ? terms : all;
+}
+
+export class Bm25Index {
+  private readonly docs: Map<string, Doc> = new Map();
+  private readonly tokens: Map<string, string[]> = new Map(); // doc id -> tokens
+  private readonly df: Map<string, number> = new Map();       // term -> doc freq
+  private avgdl = 0;
+  private N = 0;
+  private k1 = 1.5;
+  private b = 0.75;
+
+  add(doc: Doc): void {
     const toks = tokenize(doc.text);
-    this.docs.push(doc);
-    this.tokens.push(toks);
+    this.docs.set(doc.id, doc);
+    this.tokens.set(doc.id, toks);
     const seen = new Set<string>();
     for (const t of toks) {
       if (seen.has(t)) continue;
       seen.add(t);
-      this.docFreq.set(t, (this.docFreq.get(t) ?? 0) + 1);
+      this.df.set(t, (this.df.get(t) ?? 0) + 1);
     }
-    this.recomputeAvg();
+    this.N = this.docs.size;
+    let total = 0;
+    for (const v of this.tokens.values()) total += v.length;
+    this.avgdl = total / Math.max(this.N, 1);
   }
 
-  bulk(docs: BM25Doc[]): void {
-    for (const d of docs) this.add(d);
-  }
-
-  private recomputeAvg(): void {
-    const total = this.tokens.reduce((a, t) => a + t.length, 0);
-    this.avgDl = total / Math.max(1, this.tokens.length);
-  }
-
-  search(query: string, k = 10): BM25SearchResult[] {
-    const qToks = tokenize(query);
-    if (!qToks.length || !this.docs.length) return [];
-    const N = this.docs.length;
-    const scores = new Array<number>(N).fill(0);
-    for (const q of qToks) {
-      const df = this.docFreq.get(q) ?? 0;
-      if (df === 0) continue;
-      const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
-      for (let i = 0; i < N; i++) {
-        const toks = this.tokens[i] ?? [];
-        const tf = toks.reduce((a, t) => (t === q ? a + 1 : a), 0);
-        if (tf === 0) continue;
-        const dl = toks.length;
-        const num = tf * (K1 + 1);
-        const den = tf + K1 * (1 - B + (B * dl) / Math.max(1, this.avgDl));
-        scores[i] = (scores[i] ?? 0) + idf * (num / den);
+  search(query: string, k = 10): ScoredDoc[] {
+    const qt = queryTokens(query);
+    if (qt.length === 0) return [];
+    const results: ScoredDoc[] = [];
+    for (const [id, toks] of this.tokens) {
+      let score = 0;
+      const dl = toks.length;
+      const tf: Map<string, number> = new Map();
+      for (const t of toks) tf.set(t, (tf.get(t) ?? 0) + 1);
+      for (const term of qt) {
+        const f = tf.get(term);
+        if (!f) continue;
+        const n = this.df.get(term) ?? 0;
+        const idf = Math.log((this.N - n + 0.5) / (n + 0.5) + 1);
+        const denom = f + this.k1 * (1 - this.b + this.b * (dl / Math.max(this.avgdl, 1)));
+        score += idf * ((f * (this.k1 + 1)) / denom);
       }
+      if (score > 0) results.push({ id, score });
     }
-    const ranked: BM25SearchResult[] = scores
-      .map((score, i) => {
-        const doc = this.docs[i];
-        if (!doc || score <= 0) return null;
-        return { id: doc.id, score, payload: doc.payload };
-      })
-      .filter((r): r is BM25SearchResult => r !== null)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, k);
-    return ranked;
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, k);
+  }
+
+  get(id: string): Doc | undefined {
+    return this.docs.get(id);
   }
 }
