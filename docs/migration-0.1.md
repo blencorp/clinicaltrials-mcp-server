@@ -247,7 +247,7 @@ iterator).
 | Limit | Default | Setting |
 |---|---|---|
 | `execute` timeout | 15 s (100 ms to 60 s) | `timeoutMs` per call (the old default and ceiling) |
-| `execute` memory | 64 MB (16 to 256) | `memoryMb` per call (Deno: RSS above it ends the process) |
+| `execute` memory | 64 MB (16 to 256) | `memoryMb` per call. It is the V8 heap limit (`--max-old-space-size`). On Deno the process is also killed when resident memory grows by more than 2 × `memoryMb` + 96 MiB above its startup baseline (224 MiB at the default 64), so size a container for about 8 × that growth plus the Node server when 8 executions run at once (the worst case) |
 | code, result | 256 KiB, 256 KiB | fixed; a result over it fails with `ResultTooLarge` (pass `fields`) |
 | logs | 64 KiB and 1000 lines | fixed; later lines become `[logs truncated]` |
 | pending SDK calls | 100 | fixed; equals the call budget so `Promise.all` over it works |

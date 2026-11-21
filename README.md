@@ -396,7 +396,7 @@ the native addon isn't available. Both enforce identical policy:
   dynamic `import()`, `eval`, `new Function`, `process`, `__host`, and
   unsafe prototype access before execution. The runtime sandbox remains the
   primary security boundary.
-- 15 s wall-clock, 64 MB heap (isolate mode); per-call overrides available
+- 15 s wall-clock, 64 MB V8 heap (`memoryMb`; on Deno resident memory may also grow by 2 × `memoryMb` + 96 MiB, 224 MiB at the default, before the process is killed); per-call overrides available
   via `timeoutMs` / `memoryMb`.
 - Only capability: the `ctgov.*` binding proxied over host RPC.
 
