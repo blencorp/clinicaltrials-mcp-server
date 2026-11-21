@@ -53,7 +53,7 @@ The payoff is concrete:
 | **Privacy policy** | [`legal/privacy-policy.md`](./privacy-policy.md) |
 | **Terms** | [`legal/terms.md`](./terms.md) |
 | **Support** | <opensource@blencorp.com> · SLOs in [`legal/support.md`](./support.md) |
-| **License** | MIT |
+| **License** | Apache-2.0 |
 | **Publisher** | BLEN, Inc — digital services firm specializing in ML/AI, modernization, and human-centered design |
 
 > Unaffiliated with NIH, NLM, or ClinicalTrials.gov. Data is retrieved live from the
@@ -171,7 +171,7 @@ The `execute` tool is the differentiator and it is hardened end-to-end:
 - [x] **Health endpoints** — `/health` returns 200.
 - [x] **≥ 3 working examples** — six shipped in [`examples/`](../examples/).
 - [x] **Privacy policy, terms, support docs** — all in [`legal/`](./).
-- [x] **Public source code** — MIT-licensed on GitHub.
+- [x] **Public source code** — Apache-2.0-licensed on GitHub.
 - [x] **MCP Inspector tested** — every tool exercised end-to-end before each release.
 
 ## Launch readiness

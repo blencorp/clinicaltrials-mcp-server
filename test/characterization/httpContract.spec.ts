@@ -3,6 +3,7 @@
 // modes (authenticated, --public-docs, --insecure). Pinned on v1 originally; updated for the SDK v2
 // port against the expected-diff list in docs/migration-0.1.md (H* rows). test/http-integration.spec.ts
 // covers the new security rules (Host, Origin, 405, body cap, auth negatives) and both protocol eras.
+import { SERVER_VERSION } from "../../src/server/mcpServer.js";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
@@ -188,7 +189,7 @@ describe.each([
     expect(r.headers.get("content-type")).toBe("application/json; charset=utf-8");
     expect(r.headers.get("cache-control")).toBe("no-store");
     expect(r.headers.get("x-trace-id")).toMatch(/^[0-9a-f-]{36}$/);
-    expect(await r.json()).toEqual({ status: "ok", version: "0.1.0-alpha.0", protocol: "2026-07-28" });
+    expect(await r.json()).toEqual({ status: "ok", version: SERVER_VERSION, protocol: "2026-07-28" });
   });
 
   it("/healthz and /readyz are removed (H7)", async () => {
