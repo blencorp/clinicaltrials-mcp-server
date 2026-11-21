@@ -111,6 +111,24 @@ describe("authenticated serving requires process isolation", () => {
     }
   });
 
+  it("--insecure ignores an ambient HOST and listens on loopback", async () => {
+    const previous = process.env.HOST;
+    process.env.HOST = "0.0.0.0"; // what deploy/Dockerfile and .env.example set
+    try {
+      const srv = await startHttpServer({ port: 0, insecure: true });
+      try {
+        const health = await fetch(`http://127.0.0.1:${srv.port}/healthz`);
+        expect(health.status).toBe(200);
+        expect(srv.host).toBe("127.0.0.1");
+      } finally {
+        await srv.close();
+      }
+    } finally {
+      if (previous === undefined) delete process.env.HOST;
+      else process.env.HOST = previous;
+    }
+  });
+
   it("rejects combining --insecure and --public-docs", async () => {
     await expect(startHttpServer({ port: 0, insecure: true, publicDocs: true })).rejects.toThrow(/mutually exclusive/);
   });

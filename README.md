@@ -238,7 +238,7 @@ node dist/bin.js --http --port 8080
 # Anonymous, docs-only HTTP (search_api + describe_schema; no execute, no sandbox)
 node dist/bin.js --http --port 8080 --public-docs
 
-# HTTP transport with no auth (DEV ONLY; binds 127.0.0.1 unless --host is given)
+# HTTP transport with no auth (DEV ONLY; binds 127.0.0.1 — HOST is ignored, only --host overrides)
 node dist/bin.js --http --port 8080 --insecure
 
 # Force a specific sandbox

@@ -59,7 +59,7 @@ function printHelp(): void {
       "HTTP modes:",
       "  (default)       authenticated; execute runs only in the Deno process sandbox",
       "  --public-docs   anonymous, docs-only: search_api + describe_schema, no execute",
-      "  --insecure      local development only: no auth, binds 127.0.0.1 unless --host",
+      "  --insecure      local development only: no auth, binds 127.0.0.1 (only --host overrides)",
       "",
       "HTTP auth:",
       "  CTGOV_AUTH_PROVIDER=clerk",

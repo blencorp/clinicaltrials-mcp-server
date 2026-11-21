@@ -139,13 +139,20 @@ function pickBearer(req: IncomingMessage): string | null {
   return m && m[1] ? m[1].trim() : null;
 }
 
-export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ close: () => Promise<void>; port: number }> {
+export async function startHttpServer(
+  opts: HttpServerOptions = {},
+): Promise<{ close: () => Promise<void>; port: number; host: string }> {
   if (opts.insecure && opts.publicDocs) {
     throw new Error("--insecure and --public-docs are mutually exclusive");
   }
   const port = opts.port ?? Number(process.env.PORT ?? 8080);
-  // Without authentication and with code execution, listen on loopback unless told otherwise.
-  const host = opts.host ?? process.env.HOST ?? (opts.insecure ? "127.0.0.1" : "0.0.0.0");
+  // --insecure runs anyone's code without authentication, so it listens on loopback. Only an
+  // explicit --host overrides that; the ambient HOST variable (set to 0.0.0.0 by the Docker
+  // image and .env.example) deliberately does not.
+  const host = opts.insecure ? (opts.host ?? "127.0.0.1") : (opts.host ?? process.env.HOST ?? "0.0.0.0");
+  if (opts.insecure && opts.host !== undefined && !["127.0.0.1", "::1", "localhost"].includes(opts.host)) {
+    logger.warn("http.insecure_public", { host: opts.host, note: "unauthenticated server reachable beyond this machine" });
+  }
 
   const authConfig: AuthConfig = loadAuthConfig();
   const unauthenticated = opts.insecure === true || opts.publicDocs === true;
@@ -458,6 +465,7 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
 
   return {
     port: actualPort,
+    host,
     close: async () => {
       clearInterval(sweepTimer);
       await Promise.all([...sessions.values()].map((s) => s.close()));
