@@ -1,41 +1,50 @@
-import type { ApiCallTrace } from "../supervisor/audit.js";
-import type { RpcDispatch } from "../sdk/runtime.js";
+import type { SandboxLimits } from './limits.js';
 
-export interface SandboxExecuteOptions {
-  /** Source code of an async arrow function body OR full program. */
+export interface ExecuteOptions {
   code: string;
-  /** Wall-clock timeout, ms. */
   timeoutMs?: number;
-  /** Maximum heap, MB (isolate mode only). */
   memoryMb?: number;
-  /** RPC dispatch function that calls the supervisor. */
-  dispatch: RpcDispatch;
+  bindings?: string[];
+  /** Overrides for the runner's byte budgets. */
+  limits?: Partial<SandboxLimits>;
+  /** Aborts the execution (client cancelled, server shutting down). */
+  signal?: AbortSignal;
 }
 
-export interface SandboxLog {
-  level: "log" | "info" | "warn" | "error";
-  args: unknown[];
-  ts: number;
-}
-
-export interface SandboxResult {
+export interface ExecuteResult {
   ok: boolean;
-  result?: unknown;
-  error?: {
-    name: string;
-    message: string;
-    stack?: string;
-    code?: string;
-  };
-  logs: SandboxLog[];
-  calls: ApiCallTrace[];
+  value?: unknown;
+  logs: string[];
+  error?: { name: string; message: string; status?: number };
   durationMs: number;
-  /** Which executor handled the request. */
-  executor: "isolate" | "deno";
 }
 
-export interface SandboxExecutor {
-  readonly kind: "isolate" | "deno";
-  execute(opts: SandboxExecuteOptions): Promise<SandboxResult>;
-  dispose?(): Promise<void> | void;
+export type SandboxKind = 'isolate' | 'deno' | 'auto';
+
+export interface SandboxRunner {
+  kind: 'isolate' | 'deno' | 'unavailable';
+  available(): Promise<boolean>;
+  execute(opts: ExecuteOptions, rpc: RpcBridge): Promise<ExecuteResult>;
 }
+
+export interface RpcCall {
+  binding: string;
+  path: string[];
+  args: unknown[];
+}
+
+export interface RpcContext {
+  /** Aborted when the execution ends; in-flight and queued upstream work must stop. */
+  signal?: AbortSignal;
+}
+
+export interface RpcBridge {
+  dispatch(call: RpcCall, ctx?: RpcContext): Promise<{ ok: boolean; value?: unknown; error?: { name: string; message: string; status?: number } }>;
+}
+
+/**
+ * Attached (non-enumerably) to a result whose sandbox process had not yet exited when the result
+ * was returned. Resolves once it has. Callers must not release execution capacity before then.
+ */
+export const TEARDOWN = Symbol('ctgov.sandbox.teardown');
+export type WithTeardown<T> = T & { [TEARDOWN]?: Promise<void> };
