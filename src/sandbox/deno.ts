@@ -296,18 +296,17 @@ const S = JSON.stringify, P = JSON.parse, Str = String, apply = Reflect.apply, t
 const ownKeys = Reflect.ownKeys, deleteProperty = Reflect.deleteProperty, defineProperty = Object.defineProperty;
 const BlobOf = Blob, urlFor = URL.createObjectURL.bind(URL), forgetUrl = URL.revokeObjectURL.bind(URL);
 // The language's own globals. A program gets these, console and the SDK bindings.
-const LANGUAGE = new Set(['globalThis', 'Infinity', 'NaN', 'undefined', 'eval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt',
+// queueMicrotask schedules only a microtask (no I/O, timers or host access), and Deno 2.9's worker
+// message plumbing calls it on the worker's global: deleting it breaks a program with three or more
+// SDK calls pending at once ("enqueue is not a function").
+const LANGUAGE = new Set(['queueMicrotask', 'globalThis', 'Infinity', 'NaN', 'undefined', 'eval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt',
   'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'unescape',
   'AggregateError', 'Array', 'ArrayBuffer', 'AsyncDisposableStack', 'BigInt', 'BigInt64Array', 'BigUint64Array', 'Boolean',
   'DataView', 'Date', 'DisposableStack', 'Error', 'EvalError', 'FinalizationRegistry', 'Float16Array', 'Float32Array',
   'Float64Array', 'Function', 'Int8Array', 'Int16Array', 'Int32Array', 'Iterator', 'Map', 'Number', 'Object', 'Promise',
   'Proxy', 'RangeError', 'ReferenceError', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'SuppressedError', 'Symbol',
   'SyntaxError', 'TypeError', 'Uint8Array', 'Uint8ClampedArray', 'Uint16Array', 'Uint32Array', 'URIError', 'WeakMap',
-  'WeakRef', 'WeakSet', 'Atomics', 'Intl', 'JSON', 'Math', 'Reflect', 'Temporal',
-  // Not language, but Deno 2.9's own message plumbing calls it on the global: with it deleted, a
-  // program with three or more SDK calls pending at once fails with "enqueue is not a function".
-  // It only schedules a microtask in this realm and reaches nothing outside it.
-  'queueMicrotask']);
+  'WeakRef', 'WeakSet', 'Atomics', 'Intl', 'JSON', 'Math', 'Reflect', 'Temporal']);
 const encoder = new TextEncoder(), encode = TextEncoder.prototype.encode, sl = String.prototype.slice;
 // The intrinsic %TypedArray%.prototype.byteLength getter, captured: user code may redefine
 // Uint8Array.prototype.length, but cannot change a getter we already hold.
