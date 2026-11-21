@@ -76,7 +76,10 @@ describe('docs policy and handler', () => {
       writeFileSync(file, '<html></html>');
       chmodSync(file, 0o000);
       try {
-        expect((await get(base, '/docs/locked.html')).status).toBe(500);
+        const locked = await get(base, '/docs/locked.html');
+        expect(locked.status).toBe(500);
+        // None of the file's headers survive into the error response (no cached 500).
+        expect(locked.headers['cache-control']).not.toBe('public, max-age=300');
       } finally {
         chmodSync(file, 0o600);
       }
