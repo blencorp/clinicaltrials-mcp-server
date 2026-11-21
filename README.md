@@ -202,8 +202,7 @@ the native compile. This repo ships `pnpm-workspace.yaml` with
 `onlyBuiltDependencies: [isolated-vm]` which should allow it; if it still
 complains, run `pnpm approve-builds` once and re-run `pnpm install`.
 
-Sandbox-requiring test suites (`sandbox.spec.ts`, `sandboxChaos.spec.ts`,
-`httpServer.spec.ts`, `authHttp.spec.ts`, `embeddedEndToEnd.spec.ts`) **skip
+Sandbox-requiring test suites (`sandbox.spec.ts`, `sandboxChaos.spec.ts`) **skip
 gracefully** when neither sandbox is available so the rest of the suite
 stays green.
 
@@ -230,8 +229,8 @@ pnpm dev                            # tsx, hot source from src/
 # or after `pnpm build`:
 node dist/bin.js
 
-# HTTP transport against the built-in embedded OAuth server (self-host)
-# Populate CTGOV_AUTH_PROVIDER=embedded, CTGOV_EMBEDDED_USERS etc. in .env
+# Authenticated HTTP transport (bearer tokens from your OIDC provider, see "Remote mode")
+# Populate CTGOV_AUTH_* and CTGOV_PUBLIC_ORIGIN in .env
 export $(grep -v '^#' .env | xargs)   # or use `direnv`, `dotenv-cli`, etc.
 node dist/bin.js --http --port 8080
 
@@ -345,7 +344,10 @@ All configuration is via environment variables. Copy
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `8080` | HTTP port (used with `--http`). |
-| `HOST` | `0.0.0.0` | HTTP bind address. |
+| `HOST` | `0.0.0.0` | HTTP bind address. Binding beyond loopback needs `CTGOV_PUBLIC_ORIGIN` or `CTGOV_ALLOWED_HOSTS`. |
+| `CTGOV_PUBLIC_ORIGIN` | *(none)* | `https://mcp.example.com`: the public origin clients use. Its host is a trusted `Host`, and it is the base of the OAuth metadata (required for authenticated serving beyond loopback). |
+| `CTGOV_ALLOWED_HOSTS` | *(none)* | Extra trusted `Host` values, comma-separated. The request's own Host is never trusted; loopback on the listening port always is. `GET /health` is exempt. |
+| `CTGOV_ALLOWED_ORIGINS` | *(none)* | Extra `Origin` values accepted on the anonymous endpoint (`--public-docs`, `--insecure`). Bearer-authenticated endpoints accept any Origin. |
 | `CTGOV_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
 | `CTGOV_SANDBOX` | `auto` | `isolate` / `deno` / `auto`. Equivalent to `--sandbox`. |
 | `CTGOV_DENO_PATH` | *(PATH lookup)* | Explicit path to the `deno` binary for the fallback executor. |
@@ -353,28 +355,26 @@ All configuration is via environment variables. Copy
 
 ### Auth
 
+Authenticated serving fails closed: an unknown provider, or a missing issuer, audience or `https` JWKS, stops startup.
+`--public-docs` and `--insecure` cannot be combined with a configured provider.
+
 | Variable | Default | Description |
 |---|---|---|
-| `CTGOV_AUTH_PROVIDER` | `none` | `clerk` / `workos` / `auth0` / `generic-oidc` / `embedded` / `none`. |
-| `CTGOV_AUTH_ISSUER` | *(none)* | Authorization server URL. Required when provider ≠ `none`. |
-| `CTGOV_AUTH_JWKS_URL` | *derived* | Defaults to `${issuer}/.well-known/jwks.json` (or `${issuer}/as/jwks.json` for `embedded`). |
-| `CTGOV_AUTH_RESOURCE` | `https://clinicaltrials.mcp.blencorp.com/mcp` | RFC 8707 audience / our `resource` identifier. |
-| `CTGOV_AUTH_SCOPES` | `ctgov.read` | Whitespace- or comma-separated list. |
+| `CTGOV_AUTH_PROVIDER` | `none` | `clerk` / `workos` / `auth0` / `generic-oidc` (all verify the same way) / `none`. |
+| `CTGOV_AUTH_ISSUER` | *(none)* | Trusted token issuer (`iss`). Required for a provider. |
+| `CTGOV_AUTH_AUDIENCE` | *(none)* | Audience (`aud`) tokens must carry, normally `https://<host>/mcp`. Required for a provider. |
+| `CTGOV_AUTH_JWKS_URL` | *(none)* | `https` JWKS endpoint of the issuer. Required for a provider (`http` only on loopback). |
+| `CTGOV_AUTH_SCOPES` | `ctgov:read` | Scopes a token must carry, **all** of them (whitespace- or comma-separated). |
+
+Only asymmetric algorithms are accepted (RS/PS/ES/EdDSA) and a token needs `exp` and `sub`.
 
 ### Network / rate limiting
 
 | Variable | Default | Description |
 |---|---|---|
-| `CTGOV_TRUST_PROXY` | *(off)* | Set to `1` when the server sits behind a known reverse proxy (Railway, Cloudflare, ALB). The per-IP limiter will then read the first entry of `x-forwarded-for` instead of the socket peer. |
-| `CTGOV_IP_RPS` | `5` | Sustained per-IP request rate on `/mcp` and `/as/*`. Health checks are exempt. |
+| `CTGOV_CLIENT_IP_HEADER` | *(none)* | Header your reverse proxy overwrites with the client address (Railway: `x-real-ip`; AWS ALB: `x-forwarded-for`, whose rightmost entry the ALB adds). Unset keys the limiter on the TCP peer. Name only a header the proxy always overwrites. |
+| `CTGOV_IP_RPS` | `5` | Sustained per-IP request rate on `/mcp` and the OAuth metadata. `/health` is exempt. |
 | `CTGOV_IP_BURST` | `20` | Burst capacity per IP. Requests over the bucket get `429` with `Retry-After`. |
-| `CTGOV_MAX_SESSIONS` | `500` | Upper bound on concurrent MCP sessions (idle-swept every minute). |
-
-### Embedded AS (self-host only)
-
-| Variable | Description |
-|---|---|
-| `CTGOV_EMBEDDED_USERS` | `alice:pass1,bob:pass2` — HTTP Basic credentials resolved during `/as/authorize`. |
 
 ### Tests / scripts
 
@@ -415,46 +415,41 @@ clinicaltrial-mcp-server --sandbox auto       # default
 Run the same server over the MCP Streamable HTTP transport with a real
 OAuth Authorization Server in front.
 
-### With Clerk (production default)
+The transport is stateless: every `POST /mcp` is self-contained (2026-07-28 `_meta` plus
+`Mcp-Method`/`Mcp-Name` headers, or a legacy `initialize` on the same request path), there are no sessions, and
+`GET`/`DELETE /mcp` answer `405`. Bodies over 1 MiB are refused.
+
+### With an OIDC provider (Clerk, WorkOS, Auth0, any OIDC issuer)
 
 ```bash
+export CTGOV_PUBLIC_ORIGIN=https://clinicaltrials.mcp.blencorp.com
 export CTGOV_AUTH_PROVIDER=clerk
 export CTGOV_AUTH_ISSUER=https://clerk.blencorp.com
-export CTGOV_AUTH_RESOURCE=https://clinicaltrials.mcp.blencorp.com/mcp
-export CTGOV_AUTH_SCOPES=ctgov.read
+export CTGOV_AUTH_AUDIENCE=https://clinicaltrials.mcp.blencorp.com/mcp
+export CTGOV_AUTH_JWKS_URL=https://clerk.blencorp.com/.well-known/jwks.json
+export CTGOV_AUTH_SCOPES=ctgov:read
 node dist/bin.js --http --port 8080
 ```
 
-Clerk (or WorkOS / Auth0 / any OIDC AS) must be configured with
+The authorization server must support
 [RFC 7591 Dynamic Client Registration](https://datatracker.ietf.org/doc/html/rfc7591)
-so Claude can self-register, and the audience / resource set to
-`https://clinicaltrials.mcp.blencorp.com/mcp` (RFC 8707).
-
-### With the built-in embedded AS (self-host)
-
-```bash
-export CTGOV_AUTH_PROVIDER=embedded
-export CTGOV_AUTH_ISSUER=https://your.host     # must match where this server is reachable
-export CTGOV_AUTH_RESOURCE=https://your.host/mcp
-export CTGOV_EMBEDDED_USERS=alice:wonderland
-node dist/bin.js --http --port 8080
-```
+so Claude can self-register, issue tokens whose audience is the `/mcp` URL (RFC 8707) and
+grant the `ctgov:read` scope. This server no longer hosts an authorization server of its own.
 
 Endpoints exposed:
 
 | Path | Purpose |
 |---|---|
-| `POST /mcp` | MCP Streamable HTTP (stateful per-session transport). |
-| `GET /healthz`, `/readyz` | ALB health checks. |
-| `GET /.well-known/oauth-protected-resource` | RFC 9728 PRM. |
-| `GET /.well-known/oauth-authorization-server` | RFC 8414 AS metadata (proxied from issuer, or served directly by the embedded AS). |
-| `POST /as/register` | (embedded) RFC 7591 DCR. |
-| `GET  /as/authorize` | (embedded) OAuth 2.1 + PKCE S256. |
-| `POST /as/token` | (embedded) authorization_code / refresh_token grants. |
-| `GET  /as/jwks.json` | (embedded) public JWKS. |
+| `POST /mcp` | MCP Streamable HTTP, stateless. `GET`/`DELETE` return `405`. |
+| `GET /health` | Health: `{status, version, protocol}`. Exempt from the Host check and the rate limit. |
+| `GET /.well-known/oauth-protected-resource[/mcp]` | RFC 9728 PRM (CORS-open). `404` when nothing is protected. |
+
+Host validation (DNS rebinding): requests must carry a `Host` named by `CTGOV_PUBLIC_ORIGIN` or
+`CTGOV_ALLOWED_HOSTS` (or loopback on the listening port), else `421`. The anonymous endpoint also
+validates `Origin`; bearer-authenticated endpoints accept any `Origin` (hosted connectors send theirs).
 
 A missing/invalid bearer returns `401` with
-`WWW-Authenticate: Bearer realm="…", resource_metadata="…"` pointing at the PRM.
+`WWW-Authenticate: Bearer resource_metadata="…"` pointing at the PRM; a token without a required scope returns `403` with `error="insufficient_scope"`.
 
 ---
 
@@ -493,7 +488,7 @@ Subsequent deploys happen automatically from
 
 Railway can host the same container directly from
 [`deploy/Dockerfile`](./deploy/Dockerfile). Railway terminates TLS, manages
-the custom domain, and sets `PORT` + `x-forwarded-for` for you.
+the custom domain, and sets `PORT` and `x-real-ip` for you.
 
 1. **Create a service** pointing at this repo. Railway detects the Dockerfile
    at `deploy/Dockerfile` (set the Dockerfile path in service settings).
@@ -502,15 +497,18 @@ the custom domain, and sets `PORT` + `x-forwarded-for` for you.
 3. **Environment variables**:
 
    ```bash
+   CTGOV_PUBLIC_ORIGIN=https://clinicaltrials.mcp.blencorp.com   # required: the image binds 0.0.0.0
+   CTGOV_CLIENT_IP_HEADER=x-real-ip   # Railway overwrites it with the client address
+   # Only when serving authenticated (run the image with `--http`):
    CTGOV_AUTH_PROVIDER=clerk
    CTGOV_AUTH_ISSUER=https://clerk.blencorp.com
-   CTGOV_AUTH_RESOURCE=https://clinicaltrials.mcp.blencorp.com/mcp
-   CTGOV_AUTH_SCOPES=ctgov.read
-   CTGOV_TRUST_PROXY=1     # required — Railway is a reverse proxy
+   CTGOV_AUTH_AUDIENCE=https://clinicaltrials.mcp.blencorp.com/mcp
+   CTGOV_AUTH_JWKS_URL=https://clerk.blencorp.com/.well-known/jwks.json
+   CTGOV_AUTH_SCOPES=ctgov:read
    CTGOV_IP_RPS=5          # optional tuning
    CTGOV_IP_BURST=20       # optional tuning
    ```
-4. **Health check path** — set to `/healthz` in Railway's service settings.
+4. **Health check path** — set to `/health` in Railway's service settings.
 
 The image starts the service with `--http --public-docs` by default (its `CMD`; `railway.json`
 says the same): anonymous and docs-only (`search_api`, `describe_schema`; no `execute`). To offer
@@ -530,7 +528,7 @@ allowlist or OWASP-managed rulesets, front Railway with Cloudflare
 ```bash
 pnpm test                           # unit + integration (undici MockAgent)
 CTGOV_LIVE=1 pnpm test              # also run the live CT.gov harness
-pnpm test -- test/embeddedEndToEnd.spec.ts   # single suite
+pnpm test test/http-integration.spec.ts   # single suite (needs `pnpm build` for cli/exports specs)
 pnpm test:watch
 ```
 
@@ -556,9 +554,6 @@ The following suites opt in to `describe.skipIf(!isAnySandboxAvailable())`:
 
 - `test/sandbox.spec.ts`
 - `test/sandboxChaos.spec.ts` — isolate chunk uses `isIsolateAvailable()`
-- `test/httpServer.spec.ts`
-- `test/authHttp.spec.ts`
-- `test/embeddedEndToEnd.spec.ts`
 
 A separate `test/liveIntegration.spec.ts` only runs under
 `CTGOV_LIVE=1` and hits the real ClinicalTrials.gov API; it is unrelated
@@ -568,7 +563,7 @@ to the sandbox gating above.
 
 ## Data handling
 
-- 5-minute in-memory response cache (per session, never persisted).
+- 5-minute in-memory response cache (per process, never persisted).
 - 30-day structured audit logs (OAuth `sub`, trace id, upstream URL, status,
   duration, bytes). Used only for abuse response. No request bodies retained.
 - No PII beyond the OAuth subject is collected.

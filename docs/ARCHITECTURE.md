@@ -10,8 +10,8 @@ only outbound path is a supervisor-backed `ctgov.*` SDK.
 flowchart TD
     subgraph TransportLayer["Transport layer"]
         direction LR
-        Stdio["stdio (local / Claude Desktop)<br/>StdioServerTransport<br/><i>no auth</i>"]
-        Http["Streamable HTTP (hosted)<br/>StreamableHTTPServerTransport<br/>+ Clerk / WorkOS / Auth0<br/>+ embedded AS (self-host)"]
+        Stdio["stdio (local / Claude Desktop)<br/>serveStdio<br/><i>no auth</i>"]
+        Http["Streamable HTTP (hosted)<br/>createMcpHandler (stateless)<br/>+ OIDC bearer verification (Clerk / WorkOS / Auth0)"]
     end
 
     Server["<b>buildMcpServer(opts)</b><br/>tools: search_api, describe_schema, execute"]
@@ -66,31 +66,24 @@ flowchart TD
 |---|---|
 | User code → host | V8 isolate (or Deno `--allow-none` subprocess), no net/fs/env/ffi |
 | User code → direct escape hatches | acorn AST preflight rejects imports, eval, host-bridge access, and unsafe prototype/property chains before execution |
-| Incoming HTTP | OAuth 2.1 PKCE + audience-bound JWT, RFC 9728 PRM, optional WAFv2 allow-list |
-| Pre-auth flood control | `IpRateLimiter` — per-IP token bucket on `/mcp` + `/as/*` (5 rps / 20 burst default), runs before JWT verification |
+| Incoming HTTP | Audience-bound, asymmetric, scope-checked JWT on every request (no sessions), RFC 9728 PRM, Host validation (421), Origin validation on the anonymous endpoint, 1 MiB body cap, optional WAFv2 allow-list |
+| Pre-auth flood control | `IpRateLimiter` — per-IP token bucket on `/mcp` and the OAuth metadata (5 rps / 20 burst default, client address from `CTGOV_CLIENT_IP_HEADER`), runs before JWT verification |
 | Per-subject fair use | SubjectQuota (60 execute/min, 600 upstream/min) |
 | Global upstream fair use | 10 rps token bucket (CT.gov documented limit) |
 | Upstream credential leakage | Credentials live only in the supervisor's HttpClient; the sandbox never sees them |
 
 ## Auth providers
 
-All providers reduce to the same `AuthAdapter` interface
-(`verifyAccessToken`, `getUpstreamCredential`):
-
-| Provider | Notes |
-|---|---|
-| `clerk` | Default for hosted. DCR + PKCE + JWKS. |
-| `workos` | Via `WorkOsAuthAdapter` (OIDC, same shape). |
-| `auth0` | Via `Auth0AuthAdapter` (OIDC, same shape). |
-| `generic-oidc` | Any OIDC IdP with a standard JWKS. |
-| `embedded` | Built-in AS (RFC 7591 DCR, auth code + PKCE, RS256 JWTs). |
-| `none` | No auth (local/stdio only). |
+`clerk`, `workos`, `auth0` and `generic-oidc` all verify bearer tokens the same way
+(`OidcVerifier` in `src/server/authz.ts`): issuer, audience, `exp` and `sub` required, asymmetric
+algorithms only, every configured scope present, keys from an `https` JWKS. `none` is for stdio,
+`--public-docs` and `--insecure` only. There is no embedded authorization server.
 
 ## OAuth metadata
 
 - `/.well-known/oauth-protected-resource` — RFC 9728 PRM advertising our
   `resource`, the trusted AS, and supported scopes.
-- `/.well-known/oauth-authorization-server` — RFC 8414 AS metadata, either
-  cached from the upstream issuer or served directly by the embedded AS.
-- `WWW-Authenticate: Bearer realm="…", resource_metadata="…"` on every 401
+- The authorization server's own metadata is read by clients from the issuer
+  named in the PRM; this server does not proxy it.
+- `WWW-Authenticate: Bearer resource_metadata="…"` on every 401
   so clients can discover the AS via the PRM.

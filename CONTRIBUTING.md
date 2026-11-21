@@ -22,15 +22,13 @@ If `pnpm test` reports `No sandbox executor available`, install one of:
 Sandbox-requiring specs skip gracefully when neither is present so the rest
 of the suite stays green.
 
-To run the HTTP transport with the built-in embedded AS:
+To run the HTTP transport locally without authentication (loopback only):
 
 ```bash
-export CTGOV_AUTH_PROVIDER=embedded
-export CTGOV_AUTH_ISSUER=http://127.0.0.1:8080
-export CTGOV_AUTH_RESOURCE=http://127.0.0.1:8080/mcp
-export CTGOV_EMBEDDED_USERS=alice:wonderland
-pnpm build && node dist/bin.js --http --port 8080
+pnpm build && node dist/bin.js --http --port 8080 --insecure
 ```
+
+For the authenticated transport, point `CTGOV_AUTH_*` at an OIDC issuer (see the README, "Remote mode").
 
 ## Conventions
 
@@ -53,7 +51,7 @@ pnpm build && node dist/bin.js --http --port 8080
 
 Present tense imperative, one sentence scope:
 
-> `feat: add embedded authorization server for self-hosts`
+> `feat: add a docs-only hosting mode`
 
 ## License
 

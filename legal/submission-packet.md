@@ -167,7 +167,7 @@ The `execute` tool is the differentiator and it is hardened end-to-end:
 - [x] **First-party API** — calls only ClinicalTrials.gov v2; no proxied third parties.
 - [x] **No financial transfers, no AI-generated media**.
 - [x] **HTTPS** — TLS 1.2/1.3 via Railway edge.
-- [x] **Health endpoints** — `/health`, `/healthz`, `/readyz` all return 200.
+- [x] **Health endpoints** — `/health` returns 200.
 - [x] **≥ 3 working examples** — five shipped in [`examples/`](../examples/).
 - [x] **Privacy policy, terms, support docs** — all in [`legal/`](./).
 - [x] **Public source code** — MIT-licensed on GitHub.
