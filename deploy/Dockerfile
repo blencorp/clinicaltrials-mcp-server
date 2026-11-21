@@ -10,7 +10,7 @@ WORKDIR /app
 RUN npm install -g --ignore-scripts pnpm@12.21.0
 
 # Install deps and build.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.cjs ./
 RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json tsconfig.build.json ./

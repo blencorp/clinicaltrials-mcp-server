@@ -1,34 +1,39 @@
 {
   "name": "@blen/clinicaltrial-mcp-server",
-  "version": "0.1.0-alpha.0",
-  "description": "MCP server for ClinicalTrials.gov (by Blen). Unaffiliated with NIH/NLM.",
-  "license": "MIT",
-  "author": "Blen <opensource@blencorp.com>",
-  "homepage": "https://github.com/blencorp/clinicaltrials-mcp-server",
+  "version": "0.1.0",
+  "description": "Code-mode MCP server for the ClinicalTrials.gov API: search_api, describe_schema and a sandboxed execute over the ctgov SDK. Unaffiliated with NIH/NLM.",
+  "license": "Apache-2.0",
+  "author": "BLEN, Inc. (https://blenlabs.com)",
+  "homepage": "https://github.com/blencorp/clinicaltrials-mcp-server#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/blencorp/clinicaltrials-mcp-server.git"
+    "url": "git+https://github.com/blencorp/clinicaltrials-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/blencorp/clinicaltrials-mcp-server/issues",
-    "email": "opensource@blencorp.com"
+    "url": "https://github.com/blencorp/clinicaltrials-mcp-server/issues"
   },
   "keywords": [
     "mcp",
     "model-context-protocol",
     "clinicaltrials",
     "clinical-trials",
+    "clinicaltrials-gov",
+    "nlm",
     "code-mode",
+    "sandbox",
+    "isolated-vm",
+    "ai-agents",
+    "claude",
     "anthropic",
-    "claude"
+    "government-data"
   ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     },
     "./package.json": "./package.json"
   },
@@ -38,10 +43,11 @@
   "files": [
     "dist",
     "schema",
-    "assets",
     "README.md",
     "LICENSE",
-    "legal"
+    "NOTICE",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "engines": {
     "node": "^24.11.0 || ^26.0.0"
@@ -50,9 +56,8 @@
     "build": "tsc -p tsconfig.build.json && pnpm build:web && (chmod +x dist/bin.js || true)",
     "dev": "tsx src/bin.ts",
     "start": "node dist/bin.js",
-    "mcpb:prepare": "tsx scripts/mcpb.ts prepare",
-    "mcpb:validate": "tsx scripts/mcpb.ts validate",
-    "mcpb:pack": "tsx scripts/mcpb.ts validate && mcpb pack .mcpb/stage clinicaltrials-mcp-server.mcpb",
+    "mcpb:prepare": "node scripts/mcpb-prepare.mjs",
+    "mcpb:pack": "mcpb pack mcpb-build clinicaltrials-mcp-server.mcpb",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p web/e2e/tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
@@ -60,12 +65,12 @@
     "regen:sdk": "tsx scripts/regenerate-sdk.ts",
     "verify:schema": "tsx scripts/verify-pinned-schema.ts",
     "check:directory": "tsx scripts/check-directory-compliance.ts",
-    "prepublishOnly": "pnpm build",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite build --watch --config web/vite.config.ts",
     "test:web": "pnpm build:web && pnpm --dir site build && playwright test",
     "kit:check": "node scripts/portal-kit.mjs",
-    "kit:update": "node scripts/portal-kit.mjs --update"
+    "kit:update": "node scripts/portal-kit.mjs --update",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@better-auth/cimd": "1.7.26",

@@ -2,6 +2,7 @@
 **/node_modules
 dist
 .mcpb
+mcpb-build
 *.mcpb
 .git
 .claude
