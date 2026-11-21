@@ -26,6 +26,11 @@ RUN pnpm build
 # Prune to production-only modules (keeps the compiled isolated-vm .node).
 RUN pnpm prune --prod
 
+# ---- Deno: the process-isolated sandbox for authenticated HTTP serving ------
+# Authenticated HTTP runs execute only in a Deno subprocess (never in the server process).
+# Pinned by digest, the same build as uspto-mcp-server.
+FROM denoland/deno:bin-2.9.8@sha256:b507583d3c68ba69f3ed2ce5969ae5b8b70f43421c781279c7aea06435263543 AS deno
+
 # ---- Runtime stage ---------------------------------------------------------
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
@@ -36,6 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 1001 --home /app --shell /usr/sbin/nologin ctgov
 
+COPY --from=deno /deno /usr/local/bin/deno
+
 COPY --from=build --chown=ctgov:ctgov /app/node_modules ./node_modules
 COPY --from=build --chown=ctgov:ctgov /app/dist ./dist
 COPY --chown=ctgov:ctgov schema ./schema
@@ -45,7 +52,8 @@ USER ctgov
 ENV NODE_ENV=production \
     PORT=8080 \
     HOST=0.0.0.0 \
-    CTGOV_LOG_LEVEL=info
+    CTGOV_LOG_LEVEL=info \
+    DENO_DIR=/tmp/deno
 
 EXPOSE 8080
 

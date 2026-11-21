@@ -88,7 +88,8 @@ describe("--public-docs: anonymous, docs-only hosting", () => {
 
 describe("authenticated serving requires process isolation", () => {
   it("refuses --sandbox isolate at startup", async () => {
-    const env = { ...process.env };
+    const keys = ["CTGOV_AUTH_PROVIDER", "CTGOV_AUTH_ISSUER", "CTGOV_AUTH_RESOURCE"] as const;
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
     process.env.CTGOV_AUTH_PROVIDER = "embedded";
     process.env.CTGOV_AUTH_ISSUER = "http://127.0.0.1:1";
     process.env.CTGOV_AUTH_RESOURCE = "http://127.0.0.1:1/mcp";
@@ -97,7 +98,10 @@ describe("authenticated serving requires process isolation", () => {
         /not allowed for authenticated HTTP serving/,
       );
     } finally {
-      process.env = env;
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
     }
   });
 

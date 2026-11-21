@@ -150,7 +150,7 @@ export async function startHttpServer(
   // explicit --host overrides that; the ambient HOST variable (set to 0.0.0.0 by the Docker
   // image and .env.example) deliberately does not.
   const host = opts.insecure ? (opts.host ?? "127.0.0.1") : (opts.host ?? process.env.HOST ?? "0.0.0.0");
-  if (opts.insecure && opts.host !== undefined && !["127.0.0.1", "::1", "localhost"].includes(opts.host)) {
+  if (opts.insecure && opts.host !== undefined && !["127.0.0.1", "::1", "[::1]", "localhost"].includes(opts.host)) {
     logger.warn("http.insecure_public", { host: opts.host, note: "unauthenticated server reachable beyond this machine" });
   }
 
@@ -161,8 +161,16 @@ export async function startHttpServer(
   // Authenticated serving runs many callers' code in one process: only Deno (a separate OS
   // process) is allowed there. Fail at startup rather than on the first execute call.
   const processIsolation = authAdapter !== null;
-  if (processIsolation && opts.sandboxMode === "isolate") {
-    throw new Error("--sandbox isolate is not allowed for authenticated HTTP serving; use --sandbox deno");
+  const requestedMode = opts.sandboxMode ?? process.env.CTGOV_SANDBOX;
+  if (processIsolation && requestedMode === "isolate") {
+    throw new Error(
+      "the isolate sandbox (--sandbox isolate / CTGOV_SANDBOX=isolate) is not allowed for authenticated HTTP serving; use deno",
+    );
+  }
+  if (processIsolation && !isDenoAvailable()) {
+    logger.warn("http.deno_missing", {
+      note: "authenticated serving runs execute only in Deno and deno is not on PATH: every execute call will fail",
+    });
   }
   const toolSet = opts.publicDocs ? "docs-only" : "all";
   const executorLabel = opts.publicDocs
@@ -177,7 +185,9 @@ export async function startHttpServer(
           ? "deno"
           : "unavailable";
   const quota = new SubjectQuota();
-  const embeddedAs = authConfig.provider === "embedded" ? buildEmbeddedAs(authConfig) : null;
+  // Unauthenticated modes advertise no authorization server, so do not serve the embedded one
+  // (open dynamic client registration, /authorize, /token) either.
+  const embeddedAs = authConfig.provider === "embedded" && !unauthenticated ? buildEmbeddedAs(authConfig) : null;
   const ipLimiter = new IpRateLimiter({
     ratePerSec: Number(process.env.CTGOV_IP_RPS ?? 5),
     burst: Number(process.env.CTGOV_IP_BURST ?? 20),
