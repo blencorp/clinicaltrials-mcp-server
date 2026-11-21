@@ -131,14 +131,9 @@ pnpm mcpb:pack      # validate + pack the final .mcpb archive
 
 Notes:
 
-- The pack step requires a local Deno binary on the build machine. The script
-  copies the host binary into the extension bundle, downloads matching helpers
-  for the other bundled targets, and points `CTGOV_DENO_ROOT` at the packaged
-  helper directory.
-- The default target set is `darwin-arm64`, `darwin-x64`, and `win32-x64`, so
-  the same `.mcpb` works in Claude Desktop on macOS and Windows.
-- To narrow or customize the bundle, set `CTGOV_MCPB_TARGETS`, for example:
-  `CTGOV_MCPB_TARGETS=darwin-arm64,win32-x64 pnpm mcpb:pack`.
+- The bundle carries no Deno: `execute` runs in the `isolated-vm` sandbox that ships in the package
+  (prebuilt binaries for Node 24 and 26 on macOS arm64, Linux x64/arm64 and Windows x64). On another
+  platform `execute` reports why it is unavailable and the other two tools keep working.
 - Installation in Claude Desktop follows Anthropic's MCPB flow:
   double-click the file, drag it into Claude Desktop, or use
   `Developer -> Extensions -> Install Extension`.
@@ -166,7 +161,7 @@ Clone the repo, install, run tests, and point Claude at your local checkout.
 #### Troubleshooting: `No sandbox executor available`
 
 If `pnpm test` prints
-`CtGovError: No sandbox executor available. Install isolated-vm (...) or the Deno CLI (...)`,
+an `execute` result `SandboxUnavailable` ("No sandbox runner available ..."),
 your machine has neither sandbox configured. Pick **one**:
 
 **Easiest — install Deno** (works on every platform, no toolchain needed):
@@ -319,7 +314,6 @@ inside the sandbox:
 
 ```ts
 ctgov.studies.search(params)        // GET /studies
-ctgov.studies.searchAll(params, o?) // async iterator over pages
 ctgov.studies.get(nctId, params?)   // GET /studies/{nctId}
 ctgov.studies.metadata(params?)     // GET /studies/metadata
 ctgov.studies.searchAreas()         // GET /studies/search-areas
@@ -330,7 +324,9 @@ ctgov.stats.fieldSizes({fields})    // GET /stats/field/sizes
 ctgov.version()                     // GET /version
 ```
 
-Five worked examples live in [`examples/`](./examples).
+There is no `searchAll`: read more than one page with a `pageToken` loop, and pass `fields` to keep the
+result under 256 KiB. Runnable programs, including the paging recipe, live in [`examples/`](./examples);
+the full method reference is [`docs/sdk-reference.md`](./docs/sdk-reference.md).
 
 ---
 
@@ -350,8 +346,12 @@ All configuration is via environment variables. Copy
 | `CTGOV_ALLOWED_ORIGINS` | *(none)* | Extra `Origin` values accepted on the anonymous endpoint (`--public-docs`, `--insecure`). Bearer-authenticated endpoints accept any Origin. |
 | `CTGOV_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
 | `CTGOV_SANDBOX` | `auto` | `isolate` / `deno` / `auto`. Equivalent to `--sandbox`. |
-| `CTGOV_DENO_PATH` | *(PATH lookup)* | Explicit path to the `deno` binary for the fallback executor. |
-| `CTGOV_DENO_ROOT` | *(none)* | Directory containing bundled Deno helpers laid out as `<platform>-<arch>/deno(.exe)`; mainly used by the packaged MCPB bundle. |
+| `CTGOV_RATE_PER_SEC` | `10` | Upstream requests per second, process-wide (ClinicalTrials.gov publishes no limit). |
+| `CTGOV_MAX_CONCURRENT_EXECUTIONS` | `8` | Simultaneous `execute` runs, server-wide. Beyond it a call answers `Busy`. |
+| `CTGOV_MAX_EXECUTIONS_PER_SUBJECT` | `2` | Simultaneous runs per caller (the authenticated subject, or the client address on `--insecure`). |
+| `CTGOV_MAX_CALLS_PER_EXECUTE` | `100` | Upstream calls one `execute` may make. |
+| `CTGOV_SUBJECT_RATE_PER_HOUR` | `3000` | Upstream calls per authenticated subject per hour. |
+| `CTGOV_BASE_URL` | `https://clinicaltrials.gov/api/v2` | Upstream base URL (tests and mirrors). |
 
 ### Auth
 

@@ -11,7 +11,7 @@ pnpm test
 pnpm dev                # runs stdio transport for local Claude Desktop testing
 ```
 
-If `pnpm test` reports `No sandbox executor available`, install one of:
+If sandbox tests skip, install one of (CI sets `CTGOV_REQUIRE_RUNNERS=1`, which fails the run instead):
 
 - **Deno** (easiest): `brew install deno` or
   `curl -fsSL https://deno.land/install.sh | sh` — the tests auto-detect it.

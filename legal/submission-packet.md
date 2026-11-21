@@ -85,7 +85,6 @@ Look up study-data fields by exact dotted path (e.g. `protocolSection.eligibilit
 Runs an async TypeScript body against a typed `ctgov.*` SDK inside a V8 isolate. The SDK surface:
 ```ts
 ctgov.studies.search(params)        // GET /studies
-ctgov.studies.searchAll(params, o?) // async iterator over pages
 ctgov.studies.get(nctId, params?)   // GET /studies/{nctId}
 ctgov.studies.metadata(params?)
 ctgov.studies.searchAreas()
