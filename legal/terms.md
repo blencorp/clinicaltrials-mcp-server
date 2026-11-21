@@ -37,8 +37,9 @@ We may suspend or revoke access that violates this section.
 
 ## 5. Rate limits
 
-Default per-subject limits: 60 `execute` calls per minute, 600 upstream API
-calls per minute. Operator may tune these without notice.
+Fair-use limits apply: per-address request limits, hourly and daily limits per
+signed-in account, and a shared limit on calls to ClinicalTrials.gov. The
+operator may tune these without notice.
 
 ## 6. Availability
 
