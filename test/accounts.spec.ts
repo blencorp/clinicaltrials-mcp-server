@@ -70,7 +70,7 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
   let pool: Pool, store: Store, server: Server, config: AccountConfig, docsRoot: string;
   let service: Awaited<ReturnType<typeof createAccountApp>>;
   let helper: ReturnType<ReturnType<typeof testUtils>['init']>['context']['test'];
-  let alice: any, bob: any, carol: any, browser: typeof fetch, other: typeof fetch;
+  let alice: any, bob: any, browser: typeof fetch, other: typeof fetch;
   const schema = `ctgov_test_${randomBytes(8).toString('hex')}`;
   let mock: MockAgent;
   // The quota is low enough to reach in a test; everything else is a production default.
@@ -176,7 +176,6 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     helper = testUtils().init((await service.auth.$context) as unknown as Parameters<ReturnType<typeof testUtils>['init']>[0]).context.test;
     alice = await helper.saveUser(helper.createUser({ email: 'alice@example.test', emailVerified: true }));
     bob = await helper.saveUser(helper.createUser({ email: 'bob@example.test', emailVerified: true }));
-    carol = await helper.saveUser(helper.createUser({ email: 'carol@example.test', emailVerified: true }));
     browser = await login(alice.id); other = await login(bob.id);
   });
   afterAll(async () => {
