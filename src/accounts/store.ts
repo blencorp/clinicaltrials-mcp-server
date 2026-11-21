@@ -25,7 +25,8 @@ export class Store {
       `);
       await client.query('COMMIT');
     } catch (error) {
-      await client.query('ROLLBACK');
+      // A failed rollback must not hide the error that caused it.
+      await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
       client.release();
