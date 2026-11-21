@@ -194,6 +194,7 @@ the 400/404 shapes and the plain-text 401/403 bodies.
 | C10 | public exports | `selectSandbox`, `BuildMcpServerOptions`, `SandboxMode`, `SandboxExecutor`, ... | see "Public exports" |
 | C11 | MCPB bundle | vendored per-platform Deno, `--sandbox deno`, `CTGOV_DENO_ROOT` | no Deno: the stdio server uses the isolated-vm sandbox from the bundle's `node_modules` (`pnpm mcpb:validate` stages it and a run of the staged bundle executes code with no `deno` on `PATH`) |
 | C12 | sandbox startup | resolved lazily on the first `execute` | resolved when the server starts (docs-only serving never resolves one) |
+| C13 | build settings | `exactOptionalPropertyTypes: true` in `tsconfig.json` | `false`, as in the shared code (internal; no runtime effect) |
 
 ## Sandbox and SDK
 
@@ -225,16 +226,21 @@ return ids;
 ```
 
 **Removed sandbox globals** (measured with `Object.getOwnPropertyNames(globalThis)` before and
-after). In the Deno runner (208 names before, 68 now) the web-platform and runtime globals are gone:
-`Deno`, `fetch`, `Request`, `Response`, `Headers`, `URL`, `URLSearchParams`, `URLPattern`,
-`TextEncoder`, `TextDecoder`, `atob`, `btoa`, `structuredClone`, `queueMicrotask`, `setTimeout`,
-`setInterval`, `setImmediate` and their `clear*` forms, `performance`, `crypto`, `AbortController`,
-`AbortSignal`, `Event`, `EventTarget`, `Blob`, `File`, `FormData`, the stream classes,
-`BroadcastChannel`, `MessageChannel`, `Worker`, `WebSocket`, `WebAssembly`, `process`, `Buffer`,
-`global`, `self`, `navigator`, `location`, `localStorage`, `caches` and the `GPU*` classes. In the
-isolate the old shim globals `__host_log` and `__host_rpc_sync` and `WebAssembly` are gone. The isolate
-never had the web-platform names, so programs that ran in both runners are unaffected; the examples
-here used none of them (only `searchAll` needed an iterator).
+after, on Deno 2.7.14 and 2.9.8). In the Deno runner (208 names before; 68 now, 69 on 2.9.8) the
+web-platform and runtime globals are gone: `Deno`, `fetch`, `Request`, `Response`, `Headers`, `URL`,
+`URLSearchParams`, `URLPattern`, `TextEncoder`, `TextDecoder`, `atob`, `btoa`, `structuredClone`,
+`setTimeout`, `setInterval`, `setImmediate` and their `clear*` forms, `performance`, `crypto`,
+`AbortController`, `AbortSignal`, `Event`, `EventTarget`, `Blob`, `File`, `FormData`, the stream
+classes, `BroadcastChannel`, `MessageChannel`, `Worker`, `WebSocket`, `WebAssembly`, `process`,
+`Buffer`, `global`, `self`, `navigator`, `location`, `localStorage`, `caches` and the `GPU*` classes.
+`queueMicrotask` stays: Deno 2.9's own message plumbing calls it on the worker global, and without it
+a program with three or more SDK calls pending at once fails (`test/sandbox.spec.ts` pins this); it
+only schedules a microtask in the sandbox's own realm. In the isolate the old shim globals
+`__host_log` and `__host_rpc_sync` are gone; `WebAssembly` stays (it is the isolate's own), and the
+frozen, non-enumerable `__ctgovInternal` bridge and a `global` alias of the isolate's own global are
+added, as in the reference runner. The isolate never had the web-platform names, so programs that ran
+in both runners are unaffected; the examples here used none of them (only `searchAll` needed an
+iterator).
 
 ## Limits
 

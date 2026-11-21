@@ -97,15 +97,17 @@ ctgov.version()
 
 ## Worked examples
 
-Five end-to-end examples ship in [`examples/`](../examples/):
+Six runnable programs ship in [`examples/`](../examples/) (each is pasteable into `execute`):
 
-1. **Phase 3 oncology by sponsor** — competitive landscape across active Phase 3 cancer trials.
-2. **Recruiting trials near a geo point** — patient-facing search by lat/lng, radius, and condition.
-3. **Eligibility digest for a single study** — readable summary of inclusion/exclusion criteria.
-4. **5-year diabetes registration trend** — time-series aggregation with a single `execute` call.
-5. **Site-contact dossier** — per-trial site/contact dump for clinician referrals.
+1. **Phase 3 oncology by sponsor**: competitive landscape across recruiting Phase 3 cancer trials, paged with `pageToken`.
+2. **Recruiting trials near a geo point**: patient-facing search by lat/lng, radius, and condition, with the nearest site computed in the sandbox.
+3. **Eligibility digest for a single study**: readable inclusion/exclusion lists.
+4. **Registration trend**: yearly counts by status from a paged search of 200-study pages.
+5. **Site-contact dossier**: per-trial site and contact report for clinician referrals.
+6. **Paging recipe**: the bounded `pageToken` loop (`searchAll` does not exist).
 
-Every example runs against the live API in under 5 seconds.
+Run against the live API they take well under a second to a few seconds each; the 25- and 50-page
+loops (examples 1 and 4) are the slowest, about 2 and 5 seconds.
 
 ## Authentication & test access
 
@@ -167,7 +169,7 @@ The `execute` tool is the differentiator and it is hardened end-to-end:
 - [x] **No financial transfers, no AI-generated media**.
 - [x] **HTTPS** — TLS 1.2/1.3 via Railway edge.
 - [x] **Health endpoints** — `/health` returns 200.
-- [x] **≥ 3 working examples** — five shipped in [`examples/`](../examples/).
+- [x] **≥ 3 working examples** — six shipped in [`examples/`](../examples/).
 - [x] **Privacy policy, terms, support docs** — all in [`legal/`](./).
 - [x] **Public source code** — MIT-licensed on GitHub.
 - [x] **MCP Inspector tested** — every tool exercised end-to-end before each release.

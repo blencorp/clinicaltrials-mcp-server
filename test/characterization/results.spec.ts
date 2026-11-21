@@ -26,7 +26,10 @@ describe("search_api result (C9)", () => {
       expect(body.hits).toHaveLength(10); // k defaults to 10
       expect(body.hits[0]).toMatchObject({ id: "ctgov.studies.search", kind: "endpoint", binding: "ctgov" });
       expect(Object.keys(body.hits[0]!)).toEqual(["id", "kind", "binding", "description", "signature", "example", "score"]);
-      await expect(JSON.stringify(body.hits[0], null, 2)).toMatchFileSnapshot(fixture("search_api.top-hit.json"));
+      // The score moves with every corpus edit, so it is checked for type and left out of the fixture.
+      const { score, ...entry } = body.hits[0]!;
+      expect(typeof score).toBe("number");
+      await expect(JSON.stringify(entry, null, 2)).toMatchFileSnapshot(fixture("search_api.top-hit.json"));
     } finally {
       await c.close();
     }

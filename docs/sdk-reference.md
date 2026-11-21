@@ -122,10 +122,10 @@ const tree = await ctgov.studies.metadata(); return tree.map(n => ({ name: n.nam
 
 #### `ctgov.studies.searchAreas()`
 
-The search areas (GET /studies/search-areas): for each area (BasicSearch, ConditionSearch, ...) the weighted study fields it covers. Useful for choosing fields in an Essie AREA[...] expression.
+The search areas (GET /studies/search-areas): [{ name: 'Study', areas: [{ name (BasicSearch, ConditionSearch, ...), param (the query.* key it backs), parts: [{ pieces, weight }] }] }]. Useful for choosing the area names in an Essie AREA[...] expression and the query.* key that searches a given field set.
 
 ```js
-const areas = await ctgov.studies.searchAreas(); return areas.map(a => a.name)
+const [study] = await ctgov.studies.searchAreas(); return study.areas.map(a => ({ area: a.name, param: a.param }))
 ```
 
 #### `ctgov.studies.enums()`
