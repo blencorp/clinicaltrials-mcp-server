@@ -1,0 +1,60 @@
+---
+title: Recipes
+description: Six programs that your assistant can run with execute, and tips for programs of your own.
+---
+
+import Example from '../../components/Example.astro';
+
+Each program runs as written in `execute`. They are plain JavaScript with top-level `await` and
+`return`, and the repository tests each one.
+
+## Reading every page
+
+The `pageToken` loop: the same search on each call, the previous page's `nextPageToken`, and a
+page limit.
+
+<Example file="paging-recipe.js" />
+
+## Sponsors of large Phase 3 trials
+
+`filter.advanced` with an Essie expression, paging, and a count for each lead sponsor.
+
+<Example file="phase3-oncology-by-sponsor.js" />
+
+## Trials near a place
+
+`filter.geo` to select the studies, sorting, `countTotal`, and the distance to the nearest site,
+worked out in the sandbox.
+
+<Example file="recruiting-near-me.js" />
+
+## Eligibility digest
+
+One study with `fields`, and its eligibility criteria split into bullets.
+
+<Example file="eligibility-digest.js" />
+
+## Registrations by year
+
+A date range in `filter.advanced`, then counts for each year and status.
+
+<Example file="registration-trend.js" />
+
+## Contacts and sites of a study
+
+One `studies.get` call, then a Markdown report built in the sandbox.
+
+<Example file="site-contact-dossier.js" />
+
+## Tips
+
+- **Pass `fields` on every search.** A full study record is large.
+- **Use large pages of few fields.** Every page is one call against the budget of 100 for one run,
+  so a page of 200 to 500 studies with three fields beats many small pages.
+- **Ask for `countTotal` on the first page only.** It adds `totalCount`.
+- **Set a page limit.** A loop that follows `nextPageToken` ends when the token is missing, and a
+  limit keeps a broad search from spending the budget.
+- **Return less.** A returned value over 256 KiB fails with `ResultTooLarge`.
+- **No matches is not an error.** A search with no matches returns a page with no studies.
+
+The [SDK reference](/reference/sdk/) lists every method.

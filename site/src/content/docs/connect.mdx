@@ -1,0 +1,88 @@
+---
+title: Connect your assistant
+description: Add the server to Claude Desktop, Claude Code, Cursor, VS Code, or Gemini CLI, and what ChatGPT and other remote clients need.
+---
+
+import { Aside, Code, LinkButton } from '@astrojs/starlight/components';
+import { bundleUrl, claudeCodeCommand, cursorLink, mcpServersJson, vscodeLink } from '../../lib/install';
+
+The server runs on your computer, and your assistant starts it. Before you connect, install
+[Node.js](https://nodejs.org/) 24.11 or later, or 26. You need no key: see [No key needed](/keys/).
+
+## Claude Desktop
+
+<LinkButton href={bundleUrl} icon="download">Download the extension</LinkButton>
+
+Open the downloaded `.mcpb` file, or drag it into the Claude Desktop window. Claude Desktop shows
+the extension for review, and then installs it.
+
+To set it up by hand, open **Settings → Developer → Edit Config**, add the server, and restart
+Claude Desktop:
+
+<Code code={mcpServersJson} lang="json" title="claude_desktop_config.json" />
+
+## Claude Code
+
+Run this command:
+
+<Code code={claudeCodeCommand} lang="bash" />
+
+## Cursor
+
+<LinkButton href={cursorLink}>Add to Cursor</LinkButton>
+
+Cursor opens with the server filled in. Review it, then install.
+
+To set it up by hand, add the server to `~/.cursor/mcp.json`, or to `.cursor/mcp.json` in one
+project:
+
+<Code code={mcpServersJson} lang="json" title="mcp.json" />
+
+## VS Code
+
+<LinkButton href={vscodeLink}>Add to VS Code</LinkButton>
+
+VS Code shows the server for review. Install it from there.
+
+To set it up by hand, see
+[MCP configuration](https://code.visualstudio.com/docs/copilot/reference/mcp-configuration) in the
+VS Code documentation.
+
+## Gemini CLI
+
+Add the server to `~/.gemini/settings.json`, or to `.gemini/settings.json` in one project:
+
+<Code code={mcpServersJson} lang="json" title="settings.json" />
+
+## ChatGPT and other remote clients
+
+ChatGPT, Claude custom connectors, and Gemini Enterprise connect to a remote server over HTTPS. They
+do not start a server on your computer.
+
+BLEN hosts one at `https://clinicaltrials.mcp.blencorp.com/mcp/account`. Add that URL as a custom connector and sign in with Google
+when your client asks. You need no key, and the connection can run all three tools. Without
+signing in, `https://clinicaltrials.mcp.blencorp.com/mcp` offers the search and schema tools but cannot run code. The
+[account page](https://clinicaltrials.mcp.blencorp.com/account) shows both URLs and lets you sign out.
+
+To run your own instance instead, see [Self-host](/self-host/).
+
+## Check that it works
+
+Ask your assistant:
+
+> Summarize the eligibility criteria of study NCT04852770.
+
+The assistant calls `search_api` to find the right methods, then `execute` to run them.
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `ValidationError` | A program passed a parameter that the method does not take. | Read the message: it names the key. See the [SDK reference](/reference/sdk/#search-parameters). |
+| `NotFound` | The NCT ID is not in ClinicalTrials.gov. | Check the ID. It is `NCT` and eight digits. |
+| `ResultTooLarge` | A program returned more than 256 KiB. | Pass `fields`, and return only what you need. |
+| `SubjectQuotaExceeded` or `Busy` | On the hosted server, your account used its quota or its simultaneous runs. | Wait, and try again. See [Limits](/keys/#limits). |
+| `SandboxUnavailable` | No sandbox runtime is available for `execute`. | Install [Deno](https://docs.deno.com/runtime/getting_started/installation/). |
+
+<Aside>
+  The built-in sandbox needs no install on Node.js 24 and 26 on macOS (Apple silicon), Linux (x64
+  and arm64), and Windows (x64). On other systems the server uses Deno.
+</Aside>
