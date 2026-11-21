@@ -1,6 +1,8 @@
-// Characterization: pins the v1 result shapes of search_api, describe_schema and execute, as the
-// MCP client sees them. It pins v1 behaviour; later packages update it via an explicit
-// expected-diff list. Large payloads live in __fixtures__ (regenerate with `vitest -u` outside CI).
+// Characterization: pins the result shapes of search_api, describe_schema and execute, as the MCP
+// client sees them. Pinned on v1 originally; updated for the SDK v2 port against the expected-diff
+// list in docs/migration-0.1.md (D3 compact JSON + structuredContent, D5 ok:false is isError, D6
+// search_api is one JSON block). Large payloads live in __fixtures__ (regenerate with `vitest -u`
+// outside CI).
 import { describe, expect, it } from "vitest";
 import { DenoExecutor, isDenoAvailable } from "../../src/sandbox/deno.js";
 import { IsolateExecutor, isIsolateAvailable } from "../../src/sandbox/isolate.js";
@@ -9,16 +11,21 @@ import { call, connect, constantUpstream, normalizeExecute } from "./helpers.js"
 
 const fixture = (name: string): string => new URL(`./__fixtures__/${name}`, import.meta.url).pathname;
 
-describe("search_api result (v1)", () => {
-  it("returns exactly two text blocks: the snippet, then a pretty-printed hit count", async () => {
+describe("search_api result", () => {
+  it("returns one compact JSON text block {query, snippet, hits} that is also the structuredContent", async () => {
     const c = await connect({ tools: "docs-only" });
     try {
       const out = await call(c, "search_api", { query: "recruiting studies by condition" });
       expect(out.isError).toBeUndefined();
-      expect(out.extraKeys).toEqual([]);
-      expect(out.texts).toHaveLength(2);
-      await expect(out.texts[0]).toMatchFileSnapshot(fixture("search_api.snippet.txt"));
-      expect(out.texts[1]).toBe('{\n  "hits": 6\n}');
+      expect(out.extraKeys).toEqual(["structuredContent"]);
+      expect(out.texts).toHaveLength(1);
+      const body = JSON.parse(out.texts[0]!) as { query: string; snippet: string; hits: number };
+      expect(out.texts[0]).toBe(JSON.stringify(body));
+      expect(Object.keys(body)).toEqual(["query", "snippet", "hits"]);
+      expect(out.structured).toEqual(body);
+      expect(body.hits).toBe(6);
+      // The snippet itself is byte-identical to v1's first text block.
+      await expect(body.snippet).toMatchFileSnapshot(fixture("search_api.snippet.txt"));
     } finally {
       await c.close();
     }
@@ -27,9 +34,12 @@ describe("search_api result (v1)", () => {
   it("honours k and reports the hit count for it", async () => {
     const c = await connect({ tools: "docs-only" });
     try {
-      const one = await call(c, "search_api", { query: "recruiting studies by condition", k: 1 });
-      expect(one.texts[1]).toBe('{\n  "hits": 1\n}');
-      expect(one.texts[0]).toMatch(/^\/\/ Top matches for: "recruiting studies by condition"\n\n\/\/ Quick reference/);
+      const one = (await call(c, "search_api", { query: "recruiting studies by condition", k: 1 })).structured as {
+        hits: number;
+        snippet: string;
+      };
+      expect(one.hits).toBe(1);
+      expect(one.snippet).toMatch(/^\/\/ Top matches for: "recruiting studies by condition"\n\n\/\/ Quick reference/);
     } finally {
       await c.close();
     }
@@ -40,27 +50,30 @@ describe("search_api result (v1)", () => {
     try {
       const out = await call(c, "search_api", { query: "zzzqqqxxx" });
       expect(out.isError).toBeUndefined();
-      expect(out.texts[1]).toBe('{\n  "hits": 0\n}');
-      expect(out.texts[0]).toMatch(/^\/\/ Top matches for: "zzzqqqxxx"\n\n\/\/ Quick reference/);
-      expect(out.texts[0]).not.toContain("// field:");
+      const body = out.structured as { hits: number; snippet: string };
+      expect(body.hits).toBe(0);
+      expect(body.snippet).toMatch(/^\/\/ Top matches for: "zzzqqqxxx"\n\n\/\/ Quick reference/);
+      expect(body.snippet).not.toContain("// field:");
     } finally {
       await c.close();
     }
   });
 });
 
-describe("describe_schema result (v1)", () => {
+describe("describe_schema result", () => {
   async function describeSchema(args: Record<string, unknown>) {
     const c = await connect({ tools: "docs-only" });
     try {
       const out = await call(c, "describe_schema", args);
       expect(out.isError).toBeUndefined();
-      expect(out.extraKeys).toEqual([]);
+      expect(out.extraKeys).toEqual(["structuredContent"]);
       expect(out.texts).toHaveLength(1);
-      // A single pretty-printed (2-space) JSON block.
+      // A single compact JSON block, also served as structuredContent.
       const parsed = JSON.parse(out.texts[0]!) as { matches: unknown[]; total: number };
-      expect(out.texts[0]).toBe(JSON.stringify(parsed, null, 2));
-      return { text: out.texts[0]!, parsed };
+      expect(out.texts[0]).toBe(JSON.stringify(parsed));
+      expect(out.structured).toEqual(parsed);
+      // The fixtures keep the v1 2-space layout so they stay reviewable.
+      return { text: JSON.stringify(parsed, null, 2), parsed };
     } finally {
       await c.close();
     }
@@ -87,10 +100,15 @@ describe("describe_schema result (v1)", () => {
     await expect(text).toMatchFileSnapshot(fixture("describe_schema.prefix.json"));
   });
 
-  it("with neither path nor prefix returns every field", async () => {
-    const { text, parsed } = await describeSchema({});
-    expect(parsed.total).toBe(31);
-    await expect(text).toMatchFileSnapshot(fixture("describe_schema.all.json"));
+  it("with neither path nor prefix is rejected (D2); v1 returned every field", async () => {
+    const c = await connect({ tools: "docs-only" });
+    try {
+      const out = await call(c, "describe_schema", {});
+      expect(out.isError).toBe(true);
+      expect(out.texts[0]).toContain("must match exactly one schema in oneOf");
+    } finally {
+      await c.close();
+    }
   });
 
   it("returns an empty match list (not an error) for an unknown path or prefix", async () => {
@@ -98,11 +116,14 @@ describe("describe_schema result (v1)", () => {
     expect((await describeSchema({ prefix: "nope." })).parsed).toEqual({ matches: [], total: 0 });
   });
 
-  it("lets path win over prefix, and treats an empty path as absent", async () => {
-    const both = await describeSchema({ path: "protocolSection.identificationModule.nctId", prefix: "derivedSection" });
-    expect(both.parsed.total).toBe(1);
-    const emptyPath = await describeSchema({ path: "", prefix: "protocolSection.statusModule" });
-    expect(emptyPath.parsed.total).toBe(4);
+  it("rejects path together with prefix (D2); v1 let path win", async () => {
+    const c = await connect({ tools: "docs-only" });
+    try {
+      const out = await call(c, "describe_schema", { path: "protocolSection.identificationModule.nctId", prefix: "derivedSection" });
+      expect(out.isError).toBe(true);
+    } finally {
+      await c.close();
+    }
   });
 });
 
@@ -121,8 +142,8 @@ function fakeExecutor(
   };
 }
 
-describe("execute result with a fake SandboxExecutor (v1)", () => {
-  it("returns one pretty-printed JSON text block with the audit trace of upstream calls attached", async () => {
+describe("execute result with a fake SandboxExecutor", () => {
+  it("returns one compact JSON text block (and structuredContent) with the audit trace of upstream calls attached", async () => {
     const upstream = constantUpstream({ apiVersion: "2.0.0" });
     const executor = fakeExecutor(async (opts) => ({
       ok: true,
@@ -135,9 +156,10 @@ describe("execute result with a fake SandboxExecutor (v1)", () => {
     try {
       const out = await call(c, "execute", { code: "return await ctgov.version();" });
       expect(out.isError).toBeUndefined();
-      expect(out.extraKeys).toEqual([]);
+      expect(out.extraKeys).toEqual(["structuredContent"]);
       expect(out.texts).toHaveLength(1);
-      expect(out.texts[0]).toBe(JSON.stringify(JSON.parse(out.texts[0]!), null, 2));
+      expect(out.texts[0]).toBe(JSON.stringify(JSON.parse(out.texts[0]!)));
+      expect(out.structured).toEqual(JSON.parse(out.texts[0]!));
       expect(Object.keys(JSON.parse(out.texts[0]!))).toEqual(["ok", "result", "logs", "durationMs", "executor", "calls"]);
       expect(normalizeExecute(out.texts[0]!)).toEqual({
         ok: true,
@@ -186,7 +208,7 @@ const REAL_RUNNERS: Array<{ kind: "deno" | "isolate"; available: boolean; make: 
   { kind: "isolate", available: isIsolateAvailable(), make: () => new IsolateExecutor() },
 ];
 
-describe.each(REAL_RUNNERS)("execute with the real $kind runner against a MockAgent (v1)", ({ kind, available, make }) => {
+describe.each(REAL_RUNNERS)("execute with the real $kind runner against a MockAgent", ({ kind, available, make }) => {
   const maybe = it.skipIf(!available);
 
   async function run(code: string, extra: Record<string, unknown> = {}) {
@@ -232,23 +254,23 @@ describe.each(REAL_RUNNERS)("execute with the real $kind runner against a MockAg
     expect(body.result).toBeNull();
   });
 
-  maybe("reports a thrown error as ok:false WITHOUT isError", async () => {
+  maybe("reports a thrown error as ok:false WITH isError (D5)", async () => {
     const { out, body } = await run(`throw new Error("boom");`);
-    expect(out.isError).toBeUndefined();
+    expect(out.isError).toBe(true);
     expect(body.ok).toBe(false);
     expect(body.error.message).toBe("boom");
     expect(body).not.toHaveProperty("result");
   });
 
-  maybe("reports a wall-clock timeout as ok:false WITHOUT isError", async () => {
+  maybe("reports a wall-clock timeout as ok:false WITH isError (D5)", async () => {
     const { out, body } = await run(`while (true) {}`, { timeoutMs: 500 });
-    expect(out.isError).toBeUndefined();
+    expect(out.isError).toBe(true);
     expect(body.ok).toBe(false);
     expect(body.error.code === "SANDBOX_TIMEOUT" || /timed out/i.test(body.error.message)).toBe(true);
   });
 });
 
-describe.skipIf(!isDenoAvailable())("execute envelope details specific to the Deno runner (v1)", () => {
+describe.skipIf(!isDenoAvailable())("execute envelope details specific to the Deno runner", () => {
   async function run(code: string) {
     const upstream = constantUpstream({ apiVersion: "2.0.0" });
     const c = await connect({ executor: new DenoExecutor(), dispatcher: upstream.agent });

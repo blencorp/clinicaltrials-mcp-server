@@ -98,6 +98,7 @@ export interface CallOutcome {
   texts: string[];
   /** Keys the result carried besides content/isError (e.g. structuredContent). */
   extraKeys: string[];
+  structured: unknown;
 }
 
 export async function call(c: Connected, name: string, args: unknown): Promise<CallOutcome> {
@@ -107,7 +108,19 @@ export async function call(c: Connected, name: string, args: unknown): Promise<C
     isError: res.isError as boolean | undefined,
     texts: content.map((b) => b.text ?? `<${b.type}>`),
     extraKeys: Object.keys(res).filter((k) => k !== "content" && k !== "isError"),
+    structured: res.structuredContent,
   };
+}
+
+/** What a call rejected with (a JSON-RPC protocol error), failing the test if it resolved. */
+export async function protocolError(c: Connected, name: string, args: unknown): Promise<{ code: unknown; message: string }> {
+  try {
+    await c.client.callTool({ name, arguments: args as Record<string, unknown> });
+  } catch (e) {
+    const err = e as { code?: unknown; message: string };
+    return { code: err.code, message: err.message };
+  }
+  throw new Error("expected a protocol error");
 }
 
 /** Replaces the run-to-run values (timestamps, durations, call ids, stacks) of an execute envelope. */

@@ -1,15 +1,18 @@
 [
   {
     "name": "search_api",
+    "title": "Search ClinicalTrials.gov API surface",
     "description": "Search the ClinicalTrials.gov SDK surface (see https://clinicaltrials.gov/data-api/api). Returns a TypeScript snippet describing the most relevant endpoints and study fields for your query. Use this before writing code for `execute`.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "query": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "What you are looking for, in plain words, e.g. 'recruiting studies by condition'"
         },
         "k": {
+          "description": "Number of matches to return (default 8)",
           "type": "integer",
           "minimum": 1,
           "maximum": 25
@@ -20,8 +23,28 @@
       ],
       "additionalProperties": false
     },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string",
+          "description": "TypeScript reference and the matching endpoint/field notes"
+        },
+        "hits": {
+          "type": "integer",
+          "description": "How many endpoint/field matches the snippet contains"
+        }
+      },
+      "required": [
+        "query",
+        "snippet",
+        "hits"
+      ]
+    },
     "annotations": {
-      "title": "Search ClinicalTrials.gov API surface",
       "readOnlyHint": true,
       "destructiveHint": false,
       "idempotentHint": true,
@@ -30,21 +53,63 @@
   },
   {
     "name": "describe_schema",
-    "description": "Return doc entries for study-data fields by exact `path` or by `prefix`. Useful for discovering nested field names before projection. Field reference: https://clinicaltrials.gov/data-api/about-api/study-data-structure.",
+    "title": "Describe ClinicalTrials.gov study fields",
+    "description": "Return doc entries for study-data fields by exact `path` or by `prefix` (exactly one of them). Useful for discovering nested field names before projection. Field reference: https://clinicaltrials.gov/data-api/about-api/study-data-structure.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "path": {
+          "description": "Exact dotted field path, e.g. 'protocolSection.identificationModule.nctId'",
           "type": "string"
         },
         "prefix": {
+          "description": "Path prefix to enumerate, e.g. 'protocolSection.statusModule'",
           "type": "string"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "path"
+          ],
+          "not": {
+            "required": [
+              "prefix"
+            ]
+          }
+        },
+        {
+          "required": [
+            "prefix"
+          ],
+          "not": {
+            "required": [
+              "path"
+            ]
+          }
+        }
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "matches",
+        "total"
+      ]
     },
     "annotations": {
-      "title": "Describe ClinicalTrials.gov study fields",
       "readOnlyHint": true,
       "destructiveHint": false,
       "idempotentHint": true,

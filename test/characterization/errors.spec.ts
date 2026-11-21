@@ -1,10 +1,12 @@
-// Characterization: pins the v1 tool error envelopes (isError + one pretty-printed JSON text block)
-// and the places where a failure is reported WITHOUT isError. It pins v1 behaviour; later packages
-// update it via an explicit expected-diff list.
+// Characterization: pins the tool error envelopes (isError + one compact JSON text block), the SDK's
+// own argument-validation and unknown-tool errors, and that execute ok:false now sets isError.
+// Pinned on v1 originally; updated for the SDK v2 port against the expected-diff list in
+// docs/migration-0.1.md (D1 unknown tool, D2 Ajv argument validation, D3 compact JSON, D4 zod 4
+// issues, D5 ok:false is isError).
 import { describe, expect, it } from "vitest";
 import type { SandboxExecuteOptions, SandboxExecutor, SandboxResult } from "../../src/sandbox/types.js";
 import { SubjectQuota } from "../../src/supervisor/subjectQuota.js";
-import { call, connect, constantUpstream, type CallOutcome } from "./helpers.js";
+import { call, connect, constantUpstream, protocolError, type CallOutcome } from "./helpers.js";
 
 /** An executor whose behaviour is a function of the dispatch it is handed. */
 function executorWith(run: (opts: SandboxExecuteOptions) => Promise<Omit<SandboxResult, "calls">>): SandboxExecutor {
@@ -16,50 +18,45 @@ function executorWith(run: (opts: SandboxExecuteOptions) => Promise<Omit<Sandbox
   };
 }
 
-/** Parses the single text block of an error envelope and checks it is 2-space pretty JSON. */
+/** Parses the single text block of an error envelope and checks it is compact JSON. */
 function envelope(out: CallOutcome): Record<string, unknown> {
   expect(out.isError).toBe(true);
   expect(out.extraKeys).toEqual([]);
   expect(out.texts).toHaveLength(1);
   const parsed = JSON.parse(out.texts[0]!) as Record<string, unknown>;
-  expect(out.texts[0]).toBe(JSON.stringify(parsed, null, 2));
+  expect(out.texts[0]).toBe(JSON.stringify(parsed));
   return parsed;
 }
 
-describe("argument validation errors (v1)", () => {
-  it("search_api without a query: ZodError as {name, message} where message is the JSON issue list", async () => {
+/** The SDK validates arguments against the advertised JSON Schema and answers a plain-text isError result. */
+function validation(out: CallOutcome): string {
+  expect(out.isError).toBe(true);
+  expect(out.extraKeys).toEqual([]);
+  expect(out.texts).toHaveLength(1);
+  expect(out.texts[0]).toMatch(/^Input validation error: Invalid arguments for tool /);
+  return out.texts[0]!;
+}
+
+describe("argument validation errors (SDK Ajv, before the handler)", () => {
+  it("search_api without a query", async () => {
     const c = await connect({ tools: "docs-only" });
     try {
-      const env = envelope(await call(c, "search_api", {}));
-      expect(Object.keys(env)).toEqual(["name", "message"]);
-      expect(env.name).toBe("ZodError");
-      expect(JSON.parse(env.message as string)).toEqual([
-        { code: "invalid_type", expected: "string", received: "undefined", path: ["query"], message: "Required" },
-      ]);
+      expect(validation(await call(c, "search_api", {}))).toBe(
+        "Input validation error: Invalid arguments for tool search_api: data must have required property 'query'",
+      );
     } finally {
       await c.close();
     }
   });
 
-  it("search_api with an out-of-range k and an unknown key", async () => {
+  it("search_api with an out-of-range or non-integer k, and an unknown key (now rejected)", async () => {
     const c = await connect({ tools: "docs-only" });
     try {
-      const big = envelope(await call(c, "search_api", { query: "x", k: 100 }));
-      expect(big.name).toBe("ZodError");
-      expect(JSON.parse(big.message as string)).toEqual([
-        {
-          code: "too_big",
-          maximum: 25,
-          type: "number",
-          inclusive: true,
-          exact: false,
-          message: "Number must be less than or equal to 25",
-          path: ["k"],
-        },
-      ]);
-      // Unknown keys are NOT rejected by the zod schema (non-strict z.object strips them).
-      const extra = await call(c, "search_api", { query: "x", bogus: true });
-      expect(extra.isError).toBeUndefined();
+      expect(validation(await call(c, "search_api", { query: "x", k: 100 }))).toContain("data/k must be <= 25");
+      expect(validation(await call(c, "search_api", { query: "x", k: 1.5 }))).toContain("data/k must be integer");
+      expect(validation(await call(c, "search_api", { query: "x", bogus: true }))).toContain(
+        "data must NOT have additional properties",
+      );
     } finally {
       await c.close();
     }
@@ -68,35 +65,38 @@ describe("argument validation errors (v1)", () => {
   it("execute with empty code and an out-of-range timeout", async () => {
     const c = await connect({ executor: executorWith(async () => ({ ok: true, logs: [], durationMs: 0, executor: "deno" })) });
     try {
-      const env = envelope(await call(c, "execute", { code: "", timeoutMs: 5 }));
-      expect(env.name).toBe("ZodError");
-      expect(
-        (JSON.parse(env.message as string) as Array<{ path: string[]; message: string }>).map((i) => [i.path[0], i.message]),
-      ).toEqual([
-        ["code", "code is required"],
-        ["timeoutMs", "Number must be greater than or equal to 100"],
-      ]);
+      expect(validation(await call(c, "execute", { code: "", timeoutMs: 5 }))).toContain(
+        "data/code must NOT have fewer than 1 characters, data/timeoutMs must be >= 100",
+      );
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("describe_schema needs exactly one of path and prefix", async () => {
+    const c = await connect({ tools: "docs-only" });
+    try {
+      expect(validation(await call(c, "describe_schema", {}))).toContain("data must match exactly one schema in oneOf");
+      expect(validation(await call(c, "describe_schema", { path: "a", prefix: "b" }))).toContain(
+        "data must match exactly one schema in oneOf",
+      );
     } finally {
       await c.close();
     }
   });
 });
 
-describe("CtGovError envelopes (v1)", () => {
-  it("unknown tool: VALIDATION_ERROR", async () => {
+describe("CtGovError envelopes (compact JSON)", () => {
+  it("unknown tool: JSON-RPC -32602 'Tool nope not found' (a protocol error, no longer an isError result)", async () => {
     const c = await connect({});
     try {
-      expect(envelope(await call(c, "nope", {}))).toEqual({
-        name: "CtGovError",
-        code: "VALIDATION_ERROR",
-        message: "Unknown tool: nope",
-      });
+      expect(await protocolError(c, "nope", {})).toMatchObject({ code: -32602, message: expect.stringContaining("Tool nope not found") });
     } finally {
       await c.close();
     }
   });
 
-  it("execute in docs-only mode is refused as an unknown tool, and never resolves a sandbox", async () => {
+  it("execute in docs-only mode is refused as an unknown tool (-32602), and never resolves a sandbox", async () => {
     let resolved = 0;
     const c = await connect({
       tools: "docs-only",
@@ -106,10 +106,9 @@ describe("CtGovError envelopes (v1)", () => {
       },
     });
     try {
-      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({
-        name: "CtGovError",
-        code: "VALIDATION_ERROR",
-        message: "Unknown tool: execute",
+      expect(await protocolError(c, "execute", { code: "return 1" })).toMatchObject({
+        code: -32602,
+        message: expect.stringContaining("Tool execute not found"),
       });
       expect(resolved).toBe(0);
     } finally {
@@ -197,7 +196,7 @@ describe("CtGovError envelopes (v1)", () => {
       const env = envelope(await call(c, "execute", { code: "return 1" }));
       expect(env.name).toBe("ZodError");
       expect(JSON.parse(env.message as string)).toEqual([
-        { validation: "regex", code: "invalid_string", message: "Invalid NCT ID", path: ["nctId"] },
+        { origin: "string", code: "invalid_format", format: "regex", pattern: "/^NCT[0-9]{8}$/", path: ["nctId"], message: "Invalid NCT ID" },
       ]);
     } finally {
       await c.close();
@@ -260,8 +259,8 @@ describe("CtGovError envelopes (v1)", () => {
   });
 });
 
-describe("execute ok:false is reported WITHOUT isError (v1)", () => {
-  it("timeout and throw results are ordinary results; only host-side failures set isError", async () => {
+describe("execute ok:false is reported WITH isError (D5)", () => {
+  it("timeout and throw results are isError and keep the full envelope as text and structuredContent", async () => {
     const timeout: Omit<SandboxResult, "calls"> = {
       ok: false,
       error: { name: "SandboxTimeout", message: "Sandbox wall-clock timeout", code: "SANDBOX_TIMEOUT" },
@@ -280,11 +279,21 @@ describe("execute ok:false is reported WITHOUT isError (v1)", () => {
       const c = await connect({ executor: executorWith(async () => ({ ...result })) });
       try {
         const out = await call(c, "execute", { code: "return 1" });
-        expect(out.isError).toBeUndefined();
+        expect(out.isError).toBe(true);
         expect(JSON.parse(out.texts[0]!)).toEqual({ ...result, calls: [] });
+        expect(out.structured).toEqual({ ...result, calls: [] });
       } finally {
         await c.close();
       }
+    }
+  });
+
+  it("ok:true stays a plain result", async () => {
+    const c = await connect({ executor: executorWith(async () => ({ ok: true, result: 1, logs: [], durationMs: 0, executor: "deno" })) });
+    try {
+      expect((await call(c, "execute", { code: "return 1" })).isError).toBeUndefined();
+    } finally {
+      await c.close();
     }
   });
 });

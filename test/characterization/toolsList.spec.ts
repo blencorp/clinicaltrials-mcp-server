@@ -1,13 +1,14 @@
-// Characterization: pins the v1 tools/list contract (names, descriptions, inputSchema, annotations)
-// for the `all` and `docs-only` modes. It pins v1 behaviour; later packages update it via an
-// explicit expected-diff list. The JSON fixtures under __fixtures__ are the reference copies.
+// Characterization: pins the tools/list contract (names, titles, descriptions, inputSchema,
+// outputSchema, annotations) for the `all` and `docs-only` modes. Pinned on v1 originally; updated
+// for the SDK v2 port against the expected-diff list in docs/migration-0.1.md (D7). The JSON
+// fixtures under __fixtures__ are the reference copies.
 import { describe, expect, it } from "vitest";
 import { connect } from "./helpers.js";
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url);
 const fixture = (name: string): string => new URL(name, FIXTURES).pathname;
 
-describe("tools/list (v1)", () => {
+describe("tools/list", () => {
   it("lists search_api, describe_schema, execute in `all` mode", async () => {
     const c = await connect({ tools: "all" });
     try {
@@ -41,14 +42,15 @@ describe("tools/list (v1)", () => {
     }
   });
 
-  it("serves no outputSchema and annotates every tool read-only (v1 has no structured output)", async () => {
+  it("serves an outputSchema for every tool and annotates every tool read-only", async () => {
     const c = await connect({ tools: "all" });
     try {
       const { tools } = await c.client.listTools();
       for (const t of tools) {
-        expect(t.outputSchema).toBeUndefined();
+        expect(t.outputSchema).toMatchObject({ type: "object" });
         expect(t.annotations?.readOnlyHint).toBe(true);
         expect(t.annotations?.destructiveHint).toBe(false);
+        expect(t.title).toBeTruthy();
       }
       expect(tools.map((t) => t.annotations?.openWorldHint)).toEqual([false, false, true]);
     } finally {
@@ -56,11 +58,28 @@ describe("tools/list (v1)", () => {
     }
   });
 
-  it("advertises tools capability with listChanged=false and the v1 server info", async () => {
+  it("advertises real integer/min/max constraints and rejects unknown arguments", async () => {
+    const c = await connect({ tools: "all" });
+    try {
+      const { tools } = await c.client.listTools();
+      const byName = Object.fromEntries(tools.map((t) => [t.name, t.inputSchema as any]));
+      expect(byName.search_api.properties.k).toMatchObject({ type: "integer", minimum: 1, maximum: 25 });
+      expect(byName.execute.properties.timeoutMs).toMatchObject({ type: "integer", minimum: 100, maximum: 60000 });
+      expect(byName.execute.properties.memoryMb).toMatchObject({ type: "integer", minimum: 16, maximum: 256 });
+      expect(byName.execute.required).toEqual(["code"]);
+      for (const schema of Object.values(byName)) expect(schema.additionalProperties).toBe(false);
+      expect(byName.describe_schema.oneOf).toHaveLength(2);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("advertises the tools capability, the server info and the workflow instructions", async () => {
     const c = await connect({});
     try {
       expect(c.client.getServerVersion()).toEqual({ name: "clinicaltrial-mcp-server", version: "0.1.0-alpha.0" });
-      expect(c.client.getServerCapabilities()).toEqual({ tools: { listChanged: false } });
+      expect(c.client.getServerCapabilities()).toEqual({ tools: { listChanged: true } });
+      expect(c.client.getInstructions()).toMatch(/^ClinicalTrials\.gov through code mode\./);
     } finally {
       await c.close();
     }

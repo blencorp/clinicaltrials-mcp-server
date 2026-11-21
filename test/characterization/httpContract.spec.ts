@@ -1,39 +1,14 @@
-// Characterization: pins the v1 HTTP transport contract (auth challenges, health shapes, well-known
-// documents, body limits, malformed requests, docs-only refusal) and the startup rules of the three
-// hosting modes (authenticated, --public-docs, --insecure). It pins v1 behaviour; later packages
-// update it via an explicit expected-diff list.
+// Characterization: pins the HTTP transport contract (auth challenges, health shape, well-known
+// documents, malformed requests, docs-only refusal) and the startup rules of the three hosting
+// modes (authenticated, --public-docs, --insecure). Pinned on v1 originally; updated for the SDK v2
+// port against the expected-diff list in docs/migration-0.1.md (H* rows). test/http-integration.spec.ts
+// covers the new security rules (Host, Origin, 405, body cap, auth negatives) and both protocol eras.
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { exportJWK, generateKeyPair, SignJWT, type JWK, type KeyLike } from "jose";
-import { isDenoAvailable } from "../../src/sandbox/deno.js";
+import { exportJWK, generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
 import { startHttpServer, type HttpServerOptions } from "../../src/server/http.js";
 
 const MCP_HEADERS = { "content-type": "application/json", accept: "application/json, text/event-stream" };
-const ENV_KEYS = [
-  "CTGOV_AUTH_PROVIDER",
-  "CTGOV_AUTH_ISSUER",
-  "CTGOV_AUTH_RESOURCE",
-  "CTGOV_AUTH_SCOPES",
-  "CTGOV_AUTH_JWKS_URL",
-  "CTGOV_EMBEDDED_USERS",
-  "CTGOV_SANDBOX",
-  "HOST",
-] as const;
-
-/** Runs `fn` with the given env (all other auth/host variables cleared), then restores it. */
-async function withEnv<T>(env: Partial<Record<(typeof ENV_KEYS)[number], string>>, fn: () => Promise<T>): Promise<T> {
-  const saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-  for (const k of ENV_KEYS) delete process.env[k];
-  Object.assign(process.env, env);
-  try {
-    return await fn();
-  } finally {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  }
-}
 
 interface Started {
   base: string;
@@ -41,11 +16,9 @@ interface Started {
   close: () => Promise<void>;
 }
 
-async function start(env: Parameters<typeof withEnv>[0], opts: HttpServerOptions): Promise<Started> {
-  return withEnv(env, async () => {
-    const srv = await startHttpServer({ port: 0, host: "127.0.0.1", ...opts });
-    return { base: `http://127.0.0.1:${srv.port}`, host: srv.host, close: srv.close };
-  });
+async function start(opts: HttpServerOptions): Promise<Started> {
+  const srv = await startHttpServer({ port: 0, host: "127.0.0.1", ...opts });
+  return { base: `http://127.0.0.1:${srv.port}`, host: srv.host, close: srv.close };
 }
 
 /** Parses a JSON or single-event SSE body from the Streamable HTTP transport. */
@@ -55,33 +28,11 @@ async function rpcBody(r: Response): Promise<any> {
   return JSON.parse(data ?? "null");
 }
 
-async function openSession(base: string, extra: Record<string, string> = {}): Promise<string> {
+/** One stateless JSON-RPC call (legacy era: initialize is not needed first). */
+async function rpc(base: string, method: string, params: unknown, extra: Record<string, string> = {}): Promise<any> {
   const r = await fetch(`${base}/mcp`, {
     method: "POST",
     headers: { ...MCP_HEADERS, ...extra },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } },
-    }),
-  });
-  expect(r.status).toBe(200);
-  await r.text();
-  const sid = r.headers.get("mcp-session-id")!;
-  expect(sid).toBeTruthy();
-  await fetch(`${base}/mcp`, {
-    method: "POST",
-    headers: { ...MCP_HEADERS, ...extra, "mcp-session-id": sid },
-    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-  });
-  return sid;
-}
-
-async function rpc(base: string, sid: string, method: string, params: unknown, extra: Record<string, string> = {}): Promise<any> {
-  const r = await fetch(`${base}/mcp`, {
-    method: "POST",
-    headers: { ...MCP_HEADERS, ...extra, "mcp-session-id": sid },
     body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
   });
   expect(r.status).toBe(200);
@@ -105,21 +56,20 @@ function raw(base: string, path: string, init: { method?: string; headers?: Reco
   });
 }
 
-const RESOURCE = "https://clinicaltrials.mcp.blencorp.com/mcp";
-const PRM_URL = "https://clinicaltrials.mcp.blencorp.com/.well-known/oauth-protected-resource";
-const CHALLENGE = `Bearer realm="${RESOURCE}", resource_metadata="${PRM_URL}"`;
+const AUDIENCE = "https://clinicaltrials.mcp.blencorp.com/mcp";
+const challenge = (base: string): string => `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`;
 
-describe("authenticated mode: 401/403 challenges and well-known documents (v1)", () => {
+describe("authenticated mode: 401/403 challenges and well-known documents", () => {
   let idp: Server;
   let issuer = "";
-  let key: KeyLike;
+  let key: CryptoKey;
   let app: Started;
 
   async function token(claims: Record<string, unknown>): Promise<string> {
     return new SignJWT(claims)
       .setProtectedHeader({ alg: "RS256", kid: "k1" })
       .setIssuer(issuer)
-      .setAudience(RESOURCE)
+      .setAudience(AUDIENCE)
       .setIssuedAt()
       .setExpirationTime("1h")
       .sign(key);
@@ -129,162 +79,132 @@ describe("authenticated mode: 401/403 challenges and well-known documents (v1)",
     const kp = await generateKeyPair("RS256");
     key = kp.privateKey;
     const jwk = { ...((await exportJWK(kp.publicKey)) as JWK), kid: "k1", use: "sig", alg: "RS256" };
-    idp = createServer((req, res) => {
+    idp = createServer((_req, res) => {
       res.setHeader("content-type", "application/json");
-      if (req.url === "/.well-known/oauth-authorization-server") {
-        res.end(JSON.stringify({ issuer, token_endpoint: `${issuer}/token` }));
-      } else {
-        res.end(JSON.stringify({ keys: [jwk] }));
-      }
+      res.end(JSON.stringify({ keys: [jwk] }));
     });
     await new Promise<void>((r) => idp.listen(0, "127.0.0.1", () => r()));
     issuer = `http://127.0.0.1:${(idp.address() as { port: number }).port}`;
-    app = await start(
-      {
-        CTGOV_AUTH_PROVIDER: "clerk",
-        CTGOV_AUTH_ISSUER: issuer,
-        CTGOV_AUTH_RESOURCE: RESOURCE,
-        CTGOV_AUTH_SCOPES: "ctgov.read",
-        CTGOV_AUTH_JWKS_URL: `${issuer}/.well-known/jwks.json`,
+    app = await start({
+      auth: {
+        provider: "clerk",
+        issuer,
+        audience: AUDIENCE,
+        jwksUrl: `${issuer}/.well-known/jwks.json`,
+        scopes: ["ctgov:read"],
       },
-      {},
-    );
+    });
   });
   afterAll(async () => {
     await app.close();
     await new Promise<void>((r) => idp.close(() => r()));
   });
 
-  it("401 without a bearer token: plain text body and a WWW-Authenticate pointing at the PRM", async () => {
+  it("401 without a bearer token: plain text body and a WWW-Authenticate pointing at the PRM (H1: realm dropped, path-suffixed URL)", async () => {
     const r = await fetch(`${app.base}/mcp`, { method: "POST", headers: MCP_HEADERS, body: "{}" });
     expect(r.status).toBe(401);
     expect(r.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     expect(r.headers.get("cache-control")).toBe("no-store");
-    expect(r.headers.get("www-authenticate")).toBe(CHALLENGE);
+    expect(r.headers.get("www-authenticate")).toBe(challenge(app.base));
     expect(await r.text()).toBe("missing bearer token");
   });
 
-  it("401 for a garbage bearer token, with the same challenge", async () => {
+  it("401 for a garbage bearer token (H1: the challenge adds error=\"invalid_token\", RFC 6750)", async () => {
     const r = await fetch(`${app.base}/mcp`, { method: "POST", headers: { ...MCP_HEADERS, authorization: "Bearer not-a-jwt" }, body: "{}" });
     expect(r.status).toBe(401);
-    expect(r.headers.get("www-authenticate")).toBe(CHALLENGE);
+    expect(r.headers.get("www-authenticate")).toBe(`${challenge(app.base)}, error="invalid_token"`);
     expect(await r.text()).toBe("invalid bearer token");
   });
 
-  it("403 insufficient_scope when the token lacks ctgov.read, advertising the required scope", async () => {
+  it("403 insufficient_scope when the token lacks ctgov:read, advertising the required scope (H2: scope string)", async () => {
     const t = await token({ sub: "alice", scope: "openid profile" });
     const r = await fetch(`${app.base}/mcp`, { method: "POST", headers: { ...MCP_HEADERS, authorization: `Bearer ${t}` }, body: "{}" });
     expect(r.status).toBe(403);
-    expect(r.headers.get("www-authenticate")).toBe(`${CHALLENGE}, error="insufficient_scope", scope="ctgov.read"`);
+    expect(r.headers.get("www-authenticate")).toBe(`${challenge(app.base)}, error="insufficient_scope", scope="ctgov:read"`);
     expect(await r.text()).toBe("insufficient scope");
   });
 
-  it("accepts a token with ctgov.read (or the * wildcard) and serves all three tools", async () => {
-    for (const scope of ["ctgov.read", "*"]) {
-      const auth = { authorization: `Bearer ${await token({ sub: "alice", scope })}` };
-      const sid = await openSession(app.base, auth);
-      const out = await rpc(app.base, sid, "tools/list", {}, auth);
-      expect(out.result.tools.map((t: { name: string }) => t.name)).toEqual(["search_api", "describe_schema", "execute"]);
+  it("accepts a token with ctgov:read and serves all three tools; the * wildcard no longer grants anything (H3)", async () => {
+    const auth = { authorization: `Bearer ${await token({ sub: "alice", scope: "ctgov:read" })}` };
+    const out = await rpc(app.base, "tools/list", {}, auth);
+    expect(out.result.tools.map((t: { name: string }) => t.name)).toEqual(["search_api", "describe_schema", "execute"]);
+    const wildcard = await fetch(`${app.base}/mcp`, {
+      method: "POST",
+      headers: { ...MCP_HEADERS, authorization: `Bearer ${await token({ sub: "alice", scope: "*" })}` },
+      body: "{}",
+    });
+    expect(wildcard.status).toBe(403);
+  });
+
+  it("serves the PRM unauthenticated, exactly (H4: resource derives from the listener, new name/docs fields)", async () => {
+    for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
+      const r = await fetch(`${app.base}${path}`);
+      expect(r.status).toBe(200);
+      expect(await r.json()).toEqual({
+        resource: `${app.base}/mcp`,
+        authorization_servers: [issuer],
+        bearer_methods_supported: ["header"],
+        scopes_supported: ["ctgov:read"],
+        resource_documentation: "https://github.com/blencorp/clinicaltrials-mcp-server#readme",
+        resource_policy_uri: "https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/terms.md",
+        resource_name: "ClinicalTrials.gov MCP",
+      });
     }
   });
 
-  it("403 'session subject mismatch' when another subject reuses a session id", async () => {
-    const alice = { authorization: `Bearer ${await token({ sub: "alice", scope: "ctgov.read" })}` };
-    const bob = { authorization: `Bearer ${await token({ sub: "bob", scope: "ctgov.read" })}` };
-    const sid = await openSession(app.base, alice);
-    const r = await fetch(`${app.base}/mcp`, {
-      method: "POST",
-      headers: { ...MCP_HEADERS, ...bob, "mcp-session-id": sid },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list" }),
-    });
-    expect(r.status).toBe(403);
-    expect(await r.text()).toBe("session subject mismatch");
+  it("no longer proxies the issuer's AS metadata (H5): clients read it from the issuer named in the PRM", async () => {
+    expect((await fetch(`${app.base}/.well-known/oauth-authorization-server`)).status).toBe(404);
   });
 
-  it("/healthz reports the provider, the all tool set and the process-isolated executor", async () => {
-    expect(await (await fetch(`${app.base}/healthz`)).json()).toEqual({
-      ok: true,
-      executor: isDenoAvailable() ? "deno" : "unavailable",
-      auth: "clerk",
-      tools: "all",
-    });
+  it("answers a GET, DELETE or PUT on /mcp with 405 and Allow: POST, OPTIONS (H6: was 405 only for other verbs; GET/DELETE served sessions)", async () => {
+    for (const method of ["GET", "DELETE", "PUT"]) {
+      const r = await fetch(`${app.base}/mcp`, { method });
+      expect(r.status, method).toBe(405);
+      expect(r.headers.get("allow")).toBe("POST, OPTIONS");
+    }
   });
 
-  it("serves the PRM unauthenticated, exactly", async () => {
-    const r = await fetch(`${app.base}/.well-known/oauth-protected-resource`);
-    expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({
-      resource: RESOURCE,
-      authorization_servers: [issuer],
-      bearer_methods_supported: ["header"],
-      scopes_supported: ["ctgov.read"],
-      resource_documentation: "https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/privacy-policy.md",
-      resource_policy_uri: "https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/terms.md",
-      resource_name: "ClinicalTrials.gov Explorer (by BLEN)",
-    });
-  });
-
-  it("proxies the issuer's AS metadata at /.well-known/oauth-authorization-server", async () => {
-    const r = await fetch(`${app.base}/.well-known/oauth-authorization-server`);
-    expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ issuer, token_endpoint: `${issuer}/token` });
-  });
-
-  it("answers an unsupported method on /mcp with 405 and an Allow header", async () => {
-    const r = await fetch(`${app.base}/mcp`, { method: "PUT" });
-    expect(r.status).toBe(405);
-    expect(r.headers.get("allow")).toBe("POST, GET, DELETE");
+  it("/health is exempt from auth and reports no executor or provider (H7: /healthz and /readyz are gone)", async () => {
+    expect((await fetch(`${app.base}/healthz`)).status).toBe(404);
+    expect((await fetch(`${app.base}/readyz`)).status).toBe(404);
   });
 });
 
 describe.each([
-  { label: "--public-docs", opts: { publicDocs: true }, executor: "none", tools: "docs-only" },
-  { label: "--insecure", opts: { insecure: true }, executor: undefined, tools: "all" },
-] as const)("unauthenticated $label mode (v1)", ({ opts, executor, tools }) => {
+  { label: "--public-docs", opts: { publicDocs: true } },
+  { label: "--insecure", opts: { insecure: true } },
+] as const)("unauthenticated $label mode", ({ opts }) => {
   let app: Started;
   beforeAll(async () => {
-    app = await start({}, opts);
+    app = await start(opts);
   });
   afterAll(async () => {
     await app.close();
   });
 
-  it("/healthz reports auth off", async () => {
-    const body = (await (await fetch(`${app.base}/healthz`)).json()) as Record<string, unknown>;
-    expect(body).toEqual({ ok: true, executor: body.executor, auth: "off", tools });
-    if (executor) expect(body.executor).toBe(executor);
-    else expect(["isolate", "deno", "unavailable"]).toContain(body.executor);
-  });
-
-  it("/readyz has the same shape as /healthz", async () => {
-    const a = await (await fetch(`${app.base}/healthz`)).json();
-    expect(await (await fetch(`${app.base}/readyz`)).json()).toEqual(a);
-  });
-
-  it("/health is {status:'ok', timestamp} with no-store caching and an x-trace-id", async () => {
+  it("/health is {status, version, protocol} with no-store caching and an x-trace-id (H7: timestamp replaced)", async () => {
     const r = await fetch(`${app.base}/health`);
     expect(r.status).toBe(200);
     expect(r.headers.get("content-type")).toBe("application/json; charset=utf-8");
     expect(r.headers.get("cache-control")).toBe("no-store");
     expect(r.headers.get("x-trace-id")).toMatch(/^[0-9a-f-]{36}$/);
-    const body = (await r.json()) as { status: string; timestamp: string };
-    expect(Object.keys(body)).toEqual(["status", "timestamp"]);
-    expect(body.status).toBe("ok");
-    expect(new Date(body.timestamp).toISOString()).toBe(body.timestamp);
+    expect(await r.json()).toEqual({ status: "ok", version: "0.1.0-alpha.0", protocol: "2026-07-28" });
   });
 
-  it("both well-known documents are 404 when nothing is protected", async () => {
+  it("/healthz and /readyz are removed (H7)", async () => {
+    expect((await fetch(`${app.base}/healthz`)).status).toBe(404);
+    expect((await fetch(`${app.base}/readyz`)).status).toBe(404);
+  });
+
+  it("the protected-resource document is 404 when nothing is protected", async () => {
     const prm = await fetch(`${app.base}/.well-known/oauth-protected-resource`);
     expect(prm.status).toBe(404);
     expect(await prm.json()).toEqual({ error: "no protected resource configured" });
-    const as = await fetch(`${app.base}/.well-known/oauth-authorization-server`);
-    expect(as.status).toBe(404);
-    expect(await as.json()).toEqual({ error: "no authorization server configured" });
   });
 
   it("/mcp needs no token; unknown paths are a JSON 404", async () => {
-    const sid = await openSession(app.base);
-    expect(sid).toBeTruthy();
+    const out = await rpc(app.base, "tools/list", {});
+    expect(out.result.tools.length).toBeGreaterThan(0);
     const r = await fetch(`${app.base}/nope`);
     expect(r.status).toBe(404);
     expect(await r.json()).toEqual({ error: "not_found", path: "/nope" });
@@ -301,7 +221,7 @@ describe.each([
     expect(JSON.parse(evil.body)).toEqual({ error: "not_found", path: "/" });
   });
 
-  it("serves no embedded authorization server endpoints", async () => {
+  it("serves no authorization server endpoints (the embedded AS is removed)", async () => {
     for (const [method, path] of [["POST", "/as/register"], ["GET", "/as/jwks.json"]] as const) {
       const r = await raw(app.base, path, { method });
       expect(r.status, path).toBe(404);
@@ -309,149 +229,80 @@ describe.each([
   });
 });
 
-describe("--public-docs tool surface over HTTP (v1)", () => {
+describe("--public-docs tool surface over HTTP", () => {
   let app: Started;
   beforeAll(async () => {
-    app = await start({}, { publicDocs: true });
+    app = await start({ publicDocs: true });
   });
   afterAll(async () => {
     await app.close();
   });
 
   it("lists exactly search_api and describe_schema", async () => {
-    const sid = await openSession(app.base);
-    const out = await rpc(app.base, sid, "tools/list", {});
+    const out = await rpc(app.base, "tools/list", {});
     expect(out.result.tools.map((t: { name: string }) => t.name)).toEqual(["search_api", "describe_schema"]);
   });
 
-  it("refuses execute as an unknown tool (isError, not a JSON-RPC error)", async () => {
-    const sid = await openSession(app.base);
-    const out = await rpc(app.base, sid, "tools/call", { name: "execute", arguments: { code: "return 1" } });
-    expect(out.error).toBeUndefined();
-    expect(out.result.isError).toBe(true);
-    expect(out.result.content).toHaveLength(1);
-    expect(JSON.parse(out.result.content[0].text)).toEqual({
-      name: "CtGovError",
-      code: "VALIDATION_ERROR",
-      message: "Unknown tool: execute",
+  it("refuses execute as an unknown tool: JSON-RPC -32602 (D1; was an isError result)", async () => {
+    const r = await fetch(`${app.base}/mcp`, {
+      method: "POST",
+      headers: MCP_HEADERS,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "execute", arguments: { code: "return 1" } } }),
     });
+    const out = await rpcBody(r);
+    expect(out.result).toBeUndefined();
+    expect(out.error).toMatchObject({ code: -32602, message: expect.stringContaining("Tool execute not found") });
   });
 });
 
-describe("embedded AS body limits (v1)", () => {
-  let app: Started;
-  beforeAll(async () => {
-    app = await start(
-      {
-        CTGOV_AUTH_PROVIDER: "embedded",
-        CTGOV_AUTH_ISSUER: "http://127.0.0.1:1",
-        CTGOV_AUTH_RESOURCE: "http://127.0.0.1:1/mcp",
-        CTGOV_EMBEDDED_USERS: "alice:wonderland",
-      },
-      {},
-    );
-  });
-  afterAll(async () => {
-    await app.close();
-  });
+describe("startup rules", () => {
+  const oidc = { provider: "generic-oidc", issuer: "https://idp.example", audience: "https://x/mcp", jwksUrl: "https://idp.example/jwks" } as const;
 
-  it("413 on a /as/register body over 64 KiB", async () => {
-    const r = await fetch(`${app.base}/as/register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ redirect_uris: ["http://127.0.0.1/cb"], pad: "x".repeat(70 * 1024) }),
-    });
-    expect(r.status).toBe(413);
-    expect(r.headers.get("content-type")).toBe("text/plain; charset=utf-8");
-    expect(await r.text()).toBe("request body too large (max 65536 bytes)");
-  });
-
-  it("413 on a /as/token body over 16 KiB", async () => {
-    const r = await fetch(`${app.base}/as/token`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: `grant_type=authorization_code&code=${"x".repeat(20 * 1024)}`,
-    });
-    expect(r.status).toBe(413);
-    expect(await r.text()).toBe("request body too large (max 16384 bytes)");
-  });
-
-  it("400 invalid_client_metadata for a malformed /as/register body", async () => {
-    const r = await fetch(`${app.base}/as/register`, { method: "POST", headers: { "content-type": "application/json" }, body: "{nope" });
-    expect(r.status).toBe(400);
-    expect(await r.json()).toEqual({ error: "invalid_client_metadata" });
-  });
-
-  it("the embedded AS publishes its own metadata and still 401s /mcp without a token", async () => {
-    const md = (await (await fetch(`${app.base}/.well-known/oauth-authorization-server`)).json()) as Record<string, unknown>;
-    expect(md.issuer).toBe("http://127.0.0.1:1");
-    const r = await fetch(`${app.base}/mcp`, { method: "POST", headers: MCP_HEADERS, body: "{}" });
-    expect(r.status).toBe(401);
-  });
-});
-
-describe("startup rules (v1)", () => {
   it("--insecure and --public-docs are mutually exclusive", async () => {
-    await expect(start({}, { insecure: true, publicDocs: true })).rejects.toThrow("--insecure and --public-docs are mutually exclusive");
+    await expect(start({ insecure: true, publicDocs: true })).rejects.toThrow("--insecure and --public-docs are mutually exclusive");
   });
 
   it("plain --http without auth configuration refuses to start", async () => {
-    await expect(start({}, {})).rejects.toThrow(/^HTTP transport requires auth configuration\. Set CTGOV_AUTH_PROVIDER=clerk/);
+    await expect(start({})).rejects.toThrow(/^HTTP transport requires auth configuration\. Set CTGOV_AUTH_PROVIDER/);
   });
 
-  it("an auth provider without an issuer refuses to start", async () => {
-    await expect(start({ CTGOV_AUTH_PROVIDER: "clerk" }, {})).rejects.toThrow("CTGOV_AUTH_ISSUER is required when provider != none");
+  it("an unknown auth provider refuses to start (v1 treated 'embedded' and unknown names as a provider)", async () => {
+    await expect(start({ auth: { provider: "embedded" as never } })).rejects.toThrow(/Unknown CTGOV_AUTH_PROVIDER 'embedded'/);
   });
 
-  it("authenticated serving refuses the isolate sandbox, by option and by CTGOV_SANDBOX", async () => {
-    const env = { CTGOV_AUTH_PROVIDER: "embedded", CTGOV_AUTH_ISSUER: "http://127.0.0.1:1", CTGOV_AUTH_RESOURCE: "http://127.0.0.1:1/mcp" } as const;
-    const msg = /the isolate sandbox \(--sandbox isolate \/ CTGOV_SANDBOX=isolate\) is not allowed for authenticated HTTP serving; use deno/;
-    await expect(start(env, { sandboxMode: "isolate" })).rejects.toThrow(msg);
-    await expect(start({ ...env, CTGOV_SANDBOX: "isolate" }, {})).rejects.toThrow(msg);
+  it("an auth provider without an issuer, audience or JWKS refuses to start (A1)", async () => {
+    await expect(start({ auth: { provider: "clerk" } })).rejects.toThrow("CTGOV_AUTH_ISSUER is required");
+    await expect(start({ auth: { provider: "clerk", issuer: "https://i" } })).rejects.toThrow("CTGOV_AUTH_AUDIENCE is required");
+    await expect(start({ auth: { provider: "clerk", issuer: "https://i", audience: "a" } })).rejects.toThrow("CTGOV_AUTH_JWKS_URL is required");
+    await expect(start({ auth: { ...oidc, jwksUrl: "http://idp.example/jwks" } })).rejects.toThrow("must use https");
   });
 
-  it("--insecure listens on loopback regardless of HOST; only an explicit host overrides it", async () => {
-    const dflt = await start({ HOST: "0.0.0.0" }, { insecure: true, host: undefined as never });
-    try {
-      expect(dflt.host).toBe("127.0.0.1");
-    } finally {
-      await dflt.close();
-    }
-    const explicit = await start({ HOST: "127.0.0.1" }, { insecure: true, host: "0.0.0.0" });
-    try {
-      expect(explicit.host).toBe("0.0.0.0");
-    } finally {
-      await explicit.close();
+  it("authenticated serving refuses the isolate sandbox", async () => {
+    await expect(start({ auth: oidc, sandboxMode: "isolate" })).rejects.toThrow(
+      /the isolate sandbox \(--sandbox isolate \/ CTGOV_SANDBOX=isolate\) is not allowed for authenticated HTTP serving; use deno/,
+    );
+  });
+
+  it("--public-docs and --insecure with any configured auth provider are startup errors (agreed change 1; v1 silently ignored it)", async () => {
+    for (const flags of [{ publicDocs: true }, { insecure: true }] as const) {
+      await expect(start({ ...flags, auth: oidc })).rejects.toThrow(/cannot be combined with CTGOV_AUTH_PROVIDER=generic-oidc/);
     }
   });
 
-  it("--public-docs takes its bind address from HOST when no host is given", async () => {
-    const app = await start({ HOST: "127.0.0.1" }, { publicDocs: true, host: undefined as never });
+  it("--insecure keeps the loopback address it is given; a non-loopback bind needs the trusted hosts (A2)", async () => {
+    const app = await start({ insecure: true });
     try {
       expect(app.host).toBe("127.0.0.1");
     } finally {
       await app.close();
     }
+    await expect(start({ insecure: true, host: "0.0.0.0" })).rejects.toThrow(/needs the hostnames clients use/);
+    await expect(start({ publicDocs: true, host: "0.0.0.0" })).rejects.toThrow(/needs the hostnames clients use/);
+    const open = await start({ insecure: true, host: "0.0.0.0", allowedHosts: ["mcp.example.com"] });
+    await open.close();
   });
 
-  it("--public-docs and --insecure silently IGNORE a configured auth provider (no auth, no AS, no PRM)", async () => {
-    const env = {
-      CTGOV_AUTH_PROVIDER: "embedded",
-      CTGOV_AUTH_ISSUER: "http://127.0.0.1:1",
-      CTGOV_AUTH_RESOURCE: "http://127.0.0.1:1/mcp",
-      CTGOV_EMBEDDED_USERS: "alice:wonderland",
-    } as const;
-    for (const opts of [{ publicDocs: true }, { insecure: true }] as const) {
-      const app = await start(env, opts);
-      try {
-        expect(((await (await fetch(`${app.base}/healthz`)).json()) as { auth: string }).auth).toBe("off");
-        expect((await raw(app.base, "/as/register", { method: "POST", body: "{}" })).status).toBe(404);
-        expect((await fetch(`${app.base}/.well-known/oauth-protected-resource`)).status).toBe(404);
-        const sid = await openSession(app.base);
-        expect(sid).toBeTruthy();
-      } finally {
-        await app.close();
-      }
-    }
+  it("authenticated serving beyond loopback needs CTGOV_PUBLIC_ORIGIN, not just allowed hosts (A2)", async () => {
+    await expect(start({ auth: oidc, host: "0.0.0.0", allowedHosts: ["mcp.example.com"] })).rejects.toThrow(/needs CTGOV_PUBLIC_ORIGIN/);
   });
 });

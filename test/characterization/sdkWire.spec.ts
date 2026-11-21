@@ -1,6 +1,7 @@
 // Characterization: pins the v1 SDK wire behaviour of every ctgov.* RPC method and of the
 // HttpClient underneath it (query serialization, validation, retry/backoff, caching, paging).
-// It pins v1 behaviour; later packages update it via an explicit expected-diff list.
+// Pinned on v1; the only change in the SDK v2 package is zod 4's issue codes (invalid_enum_value is
+// now invalid_value, D4 in docs/migration-0.1.md). Packages C changes the searchAll rows.
 import { describe, expect, it } from "vitest";
 import { MockAgent } from "undici";
 import { DenoExecutor, isDenoAvailable } from "../../src/sandbox/deno.js";
@@ -110,9 +111,9 @@ describe("studies.search query serialization (v1)", () => {
     const rt = new CtGovRuntime({ http: newClient(upstream), audit: newAuditContext() });
     const cases: Array<[unknown, string, string]> = [
       [{ bogus: 1 }, "unrecognized_keys", ""],
-      [{ "filter.overallStatus": ["NOPE"] }, "invalid_enum_value", "filter.overallStatus,0"],
+      [{ "filter.overallStatus": ["NOPE"] }, "invalid_value", "filter.overallStatus,0"],
       [{ pageSize: 1001 }, "too_big", "pageSize"],
-      [{ format: "xml" }, "invalid_enum_value", "format"],
+      [{ format: "xml" }, "invalid_value", "format"],
       [{ "filter.overallStatus": "RECRUITING" }, "invalid_type", "filter.overallStatus"],
     ];
     for (const [params, code, path] of cases) {
@@ -155,7 +156,7 @@ describe("studies.get (v1)", () => {
     const upstream = constantUpstream({});
     const rt = new CtGovRuntime({ http: newClient(upstream), audit: newAuditContext() });
     expect((await rejection(rt.studies.get("NCT01234567", { bogus: 1 } as never))).issues[0].code).toBe("unrecognized_keys");
-    expect((await rejection(rt.studies.get("NCT01234567", { format: "xml" } as never))).issues[0].code).toBe("invalid_enum_value");
+    expect((await rejection(rt.studies.get("NCT01234567", { format: "xml" } as never))).issues[0].code).toBe("invalid_value");
     await upstream.close();
   });
 
