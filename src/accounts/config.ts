@@ -14,6 +14,8 @@ export interface AccountConfig {
   ipBurst?: number;
   /** Extra browser origins allowed on the anonymous /mcp (CTGOV_ALLOWED_ORIGINS), as in the base transport. */
   allowedOrigins?: string[];
+  /** Where the built documentation site is (tests); default: docs-site/, a sibling of dist/. */
+  docsRoot?: string;
 }
 
 /** `env` is passed in by src/bin.ts, the only module that reads process.env. */

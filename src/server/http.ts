@@ -1,4 +1,6 @@
+import express from "express";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createMcpHandler, type AuthInfo, type McpRequestContext } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
@@ -9,6 +11,7 @@ import type { CatalogDeps } from "./toolCatalog.js";
 import type { RequestCtx } from "../tools/execute.js";
 import { logger } from "../util/logger.js";
 import { AuthConfigError, InsufficientScopeError, buildVerifier, type AuthConfig } from "./authz.js";
+import { DOCS_PATH, docsRoute } from "../accounts/docs.js";
 import { IpRateLimiter, clientIp } from "./ipRateLimiter.js";
 import { MCP_PROTOCOL_VERSION, SERVER_VERSION, buildMcpServer } from "./mcpServer.js";
 import {
@@ -34,6 +37,12 @@ export interface HttpServerOptions {
    * with `insecure` or with a configured auth provider.
    */
   publicDocs?: boolean;
+  /**
+   * Where the built documentation site is (tests). Default: docs-site/, a sibling of dist/, which
+   * the Docker image carries. Served at /docs in `publicDocs` mode only (account mode serves it
+   * itself); when the directory is missing there is no /docs.
+   */
+  docsRoot?: string;
   /** Bearer-token verification. Default: no provider. */
   auth?: AuthConfig;
   /**
@@ -247,6 +256,19 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
     onerror: (err) => logger.warn("mcp.adapter.error", { error: truncate(err.message) }),
   });
 
+  // The documentation site, served by the anonymous docs-only server like account mode serves it.
+  // Static and public; the handler sets its own CSP, caching and 404 page (accounts/docs.ts).
+  const docsRouter = publicDocs ? docsRoute(opts.docsRoot ?? fileURLToPath(new URL("../../docs-site/", import.meta.url))) : undefined;
+  const docsApp = docsRouter
+    ? express()
+        .disable("x-powered-by")
+        .use(DOCS_PATH, docsRouter)
+        .use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+          logger.error("http.docs_failed", { err: err instanceof Error ? { name: err.name, message: truncate(err.message) } : String(err) });
+          if (!res.headersSent) res.status(500).type("text/plain").send("internal error");
+        })
+    : undefined;
+
   let ownOrigin = "";
   let trustedHosts = new Set<string>();
 
@@ -275,6 +297,12 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
       const hostHeader = String(req.headers.host ?? "").toLowerCase();
       if (!trustedHosts.has(hostHeader)) {
         reply(res, 421, { error: "host_not_allowed" });
+        return;
+      }
+
+      // Before the per-IP limiter, as in account mode: static pages are not MCP traffic.
+      if (docsApp && (url.pathname === DOCS_PATH || url.pathname.startsWith(`${DOCS_PATH}/`))) {
+        docsApp(req, res);
         return;
       }
 

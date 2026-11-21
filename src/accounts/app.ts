@@ -13,6 +13,7 @@ import { logger as log } from '../util/logger.js';
 import { IpRateLimiter, clientIp } from '../server/ipRateLimiter.js';
 import { originAllowed, bearerToken, MAX_REQUEST_BODY_BYTES } from '../server/http.js';
 import { ACCOUNT_MCP_PATH, PUBLIC_MCP_PATH } from './paths.js';
+import { DOCS_PATH, docsRoute } from './docs.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -203,6 +204,11 @@ export async function createAccountApp(
   });
   const webRoot = fileURLToPath(new URL('../../dist/web/', import.meta.url));
   app.use('/assets', express.static(resolve(webRoot, 'assets'), { immutable: true, maxAge: '1y', index: false }));
+  // The documentation site, when the image carries it (deploy/Dockerfile builds site/ into
+  // docs-site/, a sibling of dist/ that the npm package does not ship). Static and public, so it
+  // sits before the per-IP limiter like /assets, with its own CSP (see docs.ts).
+  const docs = docsRoute(config.docsRoot ?? fileURLToPath(new URL('../../docs-site/', import.meta.url)));
+  if (docs) app.use(DOCS_PATH, docs);
   // Production reads each built page once; development rereads them so `pnpm dev:web` rebuilds show.
   const pages = new Map<string, string>();
   const loadPage = (file: string) => readFile(resolve(webRoot, file), 'utf8').catch(() => undefined);

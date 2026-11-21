@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createServer, get as httpGet, type Server } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Pool } from 'pg';
 import { testUtils } from 'better-auth/plugins';
 import fetchCookie from 'fetch-cookie';
@@ -65,7 +67,7 @@ describe('account quota', () => {
 
 const database = process.env.TEST_DATABASE_URL;
 describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
-  let pool: Pool, store: Store, server: Server, config: AccountConfig;
+  let pool: Pool, store: Store, server: Server, config: AccountConfig, docsRoot: string;
   let service: Awaited<ReturnType<typeof createAccountApp>>;
   let helper: ReturnType<ReturnType<typeof testUtils>['init']>['context']['test'];
   let alice: any, bob: any, carol: any, browser: typeof fetch, other: typeof fetch;
@@ -157,11 +159,14 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     pool = new Pool({ connectionString: database, options: `-c search_path=${schema}` });
     store = new Store(pool);
     await store.initialize();
+    // A minimal built docs site: /docs must be wired with its own CSP inside the account app.
+    docsRoot = mkdtempSync(join(tmpdir(), 'ctgov-docs-'));
+    writeFileSync(join(docsRoot, 'index.html'), '<html><script>window.docs=1</script><title>Docs</title></html>');
     server = createServer();
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     config = { origin: `http://127.0.0.1:${(server.address() as any).port}`, production: false,
       databaseUrl: database!, authSecret: randomToken(), googleClientId: 'fixture-google', googleClientSecret: 'fixture-secret',
-      clientIpHeader: 'x-real-ip' };
+      clientIpHeader: 'x-real-ip', docsRoot };
     // Upstream ClinicalTrials.gov calls go through an injected MockAgent, never the global dispatcher.
     mock = new MockAgent(); mock.disableNetConnect();
     const deps = await buildSupervisor({ ...cfg, dispatcher: mock });
@@ -176,6 +181,7 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
   });
   afterAll(async () => {
     await mock?.close(); await service?.close();
+    if (docsRoot) rmSync(docsRoot, { recursive: true, force: true });
     if (server) await new Promise<void>(resolve => server.close(() => resolve()));
     if (pool) { await pool.query(`DROP SCHEMA ${schema} CASCADE`); await pool.end(); }
   });
@@ -333,6 +339,22 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     expect(await status('/mcp')).toBe(421);
     expect(await status('/health')).toBe(200);
     expect(await (await fetch(`${config.origin}/health`)).json()).toMatchObject({ status: 'ok', protocol: '2026-07-28', sandbox: 'deno' });
+  });
+  it('serves the documentation site at /docs with its own CSP, behind the Host check', async () => {
+    const moved = await fetch(`${config.origin}/docs?q=1`, { redirect: 'manual' });
+    expect(moved.status).toBe(301);
+    expect(moved.headers.get('location')).toBe('/docs/?q=1');
+    const page = await fetch(`${config.origin}/docs/`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain('<title>Docs</title>');
+    // The docs policy replaces the portal's, and allows the inline script only by its hash.
+    expect(page.headers.get('content-security-policy')).toContain(`'sha256-${createHash('sha256').update('window.docs=1').digest('base64')}'`);
+    expect(page.headers.get('cache-control')).toBe('public, max-age=300');
+    // fetch cannot set Host (a forbidden header), so the rebinding check goes through node:http.
+    const { port } = new URL(config.origin);
+    const status = await new Promise<number | undefined>((resolve, reject) =>
+      httpGet({ host: '127.0.0.1', port, path: '/docs/', headers: { host: 'evil.example' } }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject));
+    expect(status).toBe(421);
   });
   // OAuth 2.0 lets a client with one registered URI omit redirect_uri. Better Auth refuses that, so
   // a signed Consent query always names one; the portal still answers 400, not 500, without it.

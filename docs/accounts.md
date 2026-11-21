@@ -40,6 +40,13 @@ command is `--http --public-docs`; run account mode by overriding it:
 docker run --rm -p 8080:8080 --env-file account.env <image> --http
 ```
 
+## Documentation site
+
+When the image carries it (`docs-site/`, built from `site/` by `deploy/Dockerfile`), the server also
+serves the documentation site at `/docs/`: in account mode and in `--public-docs` mode, behind the
+same Host check, with its own content security policy (inline scripts only by hash), and before the
+per-IP limiter. A local checkout without `cd site && pnpm build` and the image copy has no `/docs`.
+
 ## Portal API
 
 State-changing requests must be same-origin JSON from a verified session; no request names an
