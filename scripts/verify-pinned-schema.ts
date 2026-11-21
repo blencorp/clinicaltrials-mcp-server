@@ -1,50 +1,38 @@
 /**
- * Compare schema/openapi.pinned.json against the live /openapi.json.
- * Exits 1 if drift is detected (useful in CI).
+ * Compare the repository against the live ClinicalTrials.gov API. Exits 1 on drift:
+ *   - schema/openapi.pinned.json paths differ from the live /openapi.json
+ *   - schema/ctgov.json disagrees with the methods table (checked offline too, by test/sources.spec.ts)
+ *   - a curated ctgov.fields.* entry names a field /studies/metadata no longer has
+ * Fix with `pnpm regen:sdk`, edit schema/ctgov.json where it reports, then `node scripts/gen-sdk-reference.mjs`.
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { request } from "undici";
-
-const BASE = process.env.CTGOV_BASE ?? "https://clinicaltrials.gov/api/v2";
+import { OAS_URL, OPENAPI_PATH, endpointMismatches, liveSpec, missingFields } from "./ctgov-schema.js";
 
 async function main(): Promise<void> {
-  const pinned = JSON.parse(
-    readFileSync(resolve("schema", "openapi.pinned.json"), "utf8"),
-  ) as { paths?: Record<string, unknown> };
-  const res = await request(`${BASE}/openapi.json`, {
-    headers: { accept: "application/json" },
-  });
-  if (res.statusCode >= 400) {
-     
-    console.error(`Upstream ${res.statusCode}`);
+  const pinned = JSON.parse(readFileSync(OPENAPI_PATH, "utf8")) as { paths?: Record<string, unknown> };
+  const live = await liveSpec().catch((err: unknown) => {
+    console.error(`Could not read ${OAS_URL}: ${(err as Error).message}`);
     process.exit(2);
-  }
-  const live = (await res.body.json()) as { paths?: Record<string, unknown> };
+  });
   const pinnedPaths = new Set(Object.keys(pinned.paths ?? {}));
-  const livePaths = new Set(Object.keys(live.paths ?? {}));
+  const livePaths = new Set(live.paths);
   const missing = [...livePaths].filter((p) => !pinnedPaths.has(p));
   const extra = [...pinnedPaths].filter((p) => !livePaths.has(p));
-  if (missing.length === 0 && extra.length === 0) {
-     
-    console.log("Pinned schema paths match live API.");
+  const problems: string[] = [];
+  if (missing.length) problems.push(`paths missing from the pinned schema: ${missing.join(", ")}`);
+  if (extra.length) problems.push(`pinned paths removed upstream: ${extra.join(", ")}`);
+  problems.push(...endpointMismatches());
+  problems.push(...(await missingFields()).map((p) => `curated field not in /studies/metadata: ${p}`));
+  if (problems.length === 0) {
+    console.log(`Pinned schema, corpus and curated fields match the live API (${live.version}).`);
     return;
   }
-   
-  console.error("Schema drift detected.");
-  if (missing.length) {
-     
-    console.error("  Missing from pinned:", missing);
-  }
-  if (extra.length) {
-     
-    console.error("  Extra in pinned (removed upstream):", extra);
-  }
+  console.error("Schema drift detected:");
+  for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
 }
 
 main().catch((err: unknown) => {
-   
   console.error(err);
   process.exit(1);
 });

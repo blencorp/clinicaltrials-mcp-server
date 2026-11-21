@@ -24,7 +24,7 @@ jobs:
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
 
-      - name: Verify pinned schema against live /openapi.json
+      - name: Verify the pinned schema, the SDK corpus and the curated fields against the live API
         id: verify
         run: pnpm verify:schema
         continue-on-error: true
@@ -37,9 +37,9 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: Pinned ClinicalTrials.gov schema has drifted from upstream
         run: |
-          body="The weekly schema-drift job detected changes to \`https://clinicaltrials.gov/api/v2/openapi.json\` that are not reflected in \`schema/openapi.pinned.json\`.
+          body="The weekly schema-drift job found that \`schema/openapi.pinned.json\`, \`schema/ctgov.json\` (the SDK corpus) or the curated study fields no longer match the live API (\`https://clinicaltrials.gov/api/oas/v2\`, \`/studies/metadata\`).
 
-          To refresh locally: \`pnpm regen:sdk && pnpm test\`.
+          To fix locally: \`pnpm verify:schema\` names each difference. Edit \`schema/openapi.pinned.json\` and \`schema/ctgov.json\` (and register a method for a new endpoint), then \`pnpm regen:sdk && node scripts/gen-sdk-reference.mjs && pnpm test\`.
 
           Run: $RUN_URL"
           existing=$(gh issue list --state open --label schema-drift --limit 100 --json title \
