@@ -1,28 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import {
-  MockAgent,
-  setGlobalDispatcher,
-  getGlobalDispatcher,
-  type Dispatcher,
-} from "undici";
+import { MockAgent } from "undici";
 import { HttpClient } from "../src/supervisor/httpClient.js";
 import { ResponseCache } from "../src/supervisor/cache.js";
 import { RateLimiter } from "../src/supervisor/rateLimiter.js";
 import { CtGovError } from "../src/supervisor/errors.js";
 
 let agent: MockAgent;
-let original: Dispatcher;
 
 beforeEach(() => {
-  original = getGlobalDispatcher();
   agent = new MockAgent();
   agent.disableNetConnect();
-  setGlobalDispatcher(agent);
 });
 
 afterEach(async () => {
   await agent.close();
-  setGlobalDispatcher(original);
 });
 
 describe("fault injection", () => {
@@ -40,6 +31,7 @@ describe("fault injection", () => {
       );
 
     const client = new HttpClient({
+      dispatcher: agent,
       rateLimiter: new RateLimiter({ ratePerSec: 100, burst: 100 }),
     });
     const v = await client.get<{ apiVersion: string }>({ path: "/version" });
@@ -55,6 +47,7 @@ describe("fault injection", () => {
     }
 
     const client = new HttpClient({
+      dispatcher: agent,
       rateLimiter: new RateLimiter({ ratePerSec: 100, burst: 100 }),
       maxRetries: 1,
     });
@@ -76,6 +69,7 @@ describe("fault injection", () => {
       );
 
     const client = new HttpClient({
+      dispatcher: agent,
       rateLimiter: new RateLimiter({ ratePerSec: 100, burst: 100 }),
       cache: new ResponseCache({ maxEntries: 10, ttlMs: 1 }), // immediately stale
       maxRetries: 1,
@@ -104,6 +98,7 @@ describe("fault injection", () => {
       .reply(200, "not-json", { headers: { "content-type": "text/plain" } });
 
     const client = new HttpClient({
+      dispatcher: agent,
       rateLimiter: new RateLimiter({ ratePerSec: 100, burst: 100 }),
     });
     const out = await client.get<unknown>({ path: "/version" });
@@ -120,6 +115,7 @@ describe("fault injection", () => {
       .replyWithError(new Error("ECONNRESET"));
 
     const client = new HttpClient({
+      dispatcher: agent,
       rateLimiter: new RateLimiter({ ratePerSec: 100, burst: 100 }),
       maxRetries: 1,
     });
@@ -135,6 +131,7 @@ describe("fault injection", () => {
     pool.intercept({ path: "/api/v2/studies/NCT12345678", method: "GET" }).reply(404);
 
     const client = new HttpClient({
+      dispatcher: agent,
       rateLimiter: new RateLimiter({ ratePerSec: 100, burst: 100 }),
       maxRetries: 3,
     });

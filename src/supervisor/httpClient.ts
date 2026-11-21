@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { request } from "undici";
+import { request, type Dispatcher } from "undici";
 import { CtGovError } from "./errors.js";
 import { RateLimiter } from "./rateLimiter.js";
 import { ResponseCache } from "./cache.js";
@@ -22,6 +22,11 @@ export interface HttpClientOptions {
    * If set, this replaces the internal `rateLimiter.acquire()` call.
    */
   acquireFn?: () => Promise<void>;
+  /**
+   * undici dispatcher used for every outbound request. Defaults to undici's global dispatcher.
+   * Tests inject a MockAgent here instead of replacing the process-wide dispatcher.
+   */
+  dispatcher?: Dispatcher;
 }
 
 export interface RequestOptions {
@@ -65,6 +70,7 @@ export class HttpClient {
   private readonly cache: ResponseCache;
   private readonly headersProvider?: HttpClientOptions["headersProvider"];
   private readonly acquireFn?: () => Promise<void>;
+  private readonly dispatcher?: Dispatcher;
 
   constructor(opts: HttpClientOptions = {}) {
     this.baseUrl = opts.baseUrl ?? DEFAULT_BASE;
@@ -75,6 +81,7 @@ export class HttpClient {
     this.cache = opts.cache ?? new ResponseCache({ maxEntries: 500, ttlMs: 5 * 60_000 });
     if (opts.headersProvider !== undefined) this.headersProvider = opts.headersProvider;
     if (opts.acquireFn !== undefined) this.acquireFn = opts.acquireFn;
+    if (opts.dispatcher !== undefined) this.dispatcher = opts.dispatcher;
   }
 
   async get<T>(opts: RequestOptions): Promise<T> {
@@ -123,6 +130,7 @@ export class HttpClient {
           method: "GET",
           headers,
           signal: controller.signal,
+          ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
         });
         const bodyText = await res.body.text();
         const durationMs = Date.now() - started;

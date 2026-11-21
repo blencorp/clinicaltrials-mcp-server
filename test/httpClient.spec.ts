@@ -1,22 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { MockAgent, setGlobalDispatcher, getGlobalDispatcher, type Dispatcher } from "undici";
+import { MockAgent } from "undici";
 import { HttpClient } from "../src/supervisor/httpClient.js";
 import { CtGovError } from "../src/supervisor/errors.js";
 import { newAuditContext } from "../src/supervisor/audit.js";
 
 let mockAgent: MockAgent;
-let originalDispatcher: Dispatcher;
 
 beforeEach(() => {
-  originalDispatcher = getGlobalDispatcher();
   mockAgent = new MockAgent();
   mockAgent.disableNetConnect();
-  setGlobalDispatcher(mockAgent);
 });
 
 afterEach(async () => {
   await mockAgent.close();
-  setGlobalDispatcher(originalDispatcher);
 });
 
 describe("HttpClient (with undici MockAgent)", () => {
@@ -26,7 +22,7 @@ describe("HttpClient (with undici MockAgent)", () => {
       .intercept({ path: "/api/v2/version", method: "GET" })
       .reply(200, { apiVersion: "2.0.0" }, { headers: { "content-type": "application/json" } });
 
-    const client = new HttpClient();
+    const client = new HttpClient({ dispatcher: mockAgent });
     const v1 = await client.get<{ apiVersion: string }>({ path: "/version" });
     expect(v1.apiVersion).toBe("2.0.0");
     // Second call: cache hit — no second interceptor is set; if the cache
@@ -38,7 +34,7 @@ describe("HttpClient (with undici MockAgent)", () => {
   it("throws NOT_FOUND on 404", async () => {
     const pool = mockAgent.get("https://clinicaltrials.gov");
     pool.intercept({ path: "/api/v2/studies/NCT00000000", method: "GET" }).reply(404);
-    const client = new HttpClient();
+    const client = new HttpClient({ dispatcher: mockAgent });
     await expect(
       client.get({ path: "/studies/NCT00000000" }),
     ).rejects.toBeInstanceOf(CtGovError);
@@ -50,7 +46,7 @@ describe("HttpClient (with undici MockAgent)", () => {
       .intercept({ path: "/api/v2/version", method: "GET" })
       .reply(200, { apiVersion: "x" }, { headers: { "content-type": "application/json" } });
 
-    const client = new HttpClient();
+    const client = new HttpClient({ dispatcher: mockAgent });
     const audit = newAuditContext("test-sub");
     await client.get({ path: "/version", audit });
     expect(audit.calls).toHaveLength(1);
@@ -65,7 +61,7 @@ describe("HttpClient (with undici MockAgent)", () => {
       .intercept({ path: "/api/v2/version", method: "GET" })
       .reply(200, { apiVersion: "ok" }, { headers: { "content-type": "application/json" } });
 
-    const client = new HttpClient();
+    const client = new HttpClient({ dispatcher: mockAgent });
     const v = await client.get<{ apiVersion: string }>({ path: "/version" });
     expect(v.apiVersion).toBe("ok");
   });

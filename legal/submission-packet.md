@@ -143,7 +143,7 @@ The `execute` tool is the differentiator and it is hardened end-to-end:
 
 ## Engineering signals
 
-- **Test coverage** — ~60 tests across unit, integration (`nock`/MockAgent), live-API (`CTGOV_LIVE=1`), sandbox chaos, and end-to-end OAuth/embedded-AS flows. CI runs lint, typecheck, tests, build, CLI smoke, and Docker image build on every PR.
+- **Test coverage** — ~60 tests across unit, integration (undici MockAgent), live-API (`CTGOV_LIVE=1`), sandbox chaos, and end-to-end OAuth/embedded-AS flows. CI runs lint, typecheck, tests, build, CLI smoke, and Docker image build on every PR.
 - **Schema drift guard** — a weekly GitHub Actions job re-runs `pnpm verify:schema` against upstream and auto-files an issue if the pinned OpenAPI diverges.
 - **Submission self-check** — `pnpm check:directory <URL>` runs the directory compliance checklist (HTTPS, health endpoint, ≥3 working examples, legal docs present) against any deployment.
 - **Distribution** — published to npm as `@blen/clinicaltrial-mcp-server` (stdio for Claude Desktop), packaged as an `.mcpb` cross-platform desktop extension, and deployable via Railway one-click or Terraform AWS module (ECS Fargate + ALB + ACM + WAFv2).

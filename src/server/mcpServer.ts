@@ -3,6 +3,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { Dispatcher } from "undici";
 import { HttpClient } from "../supervisor/httpClient.js";
 import type { SandboxExecutor } from "../sandbox/types.js";
 import {
@@ -35,6 +36,8 @@ export interface BuildMcpServerOptions {
    * public hosting, where no one may run code.
    */
   tools?: "all" | "docs-only";
+  /** undici dispatcher for upstream requests (tests inject a MockAgent). Defaults to the global one. */
+  dispatcher?: Dispatcher;
 }
 
 const SERVER_INFO = {
@@ -62,6 +65,7 @@ export function buildMcpServer(opts: BuildMcpServerOptions): Server {
   if (opts.quota) {
     httpClientOpts.acquireFn = () => opts.quota!.acquireUpstream(subject);
   }
+  if (opts.dispatcher) httpClientOpts.dispatcher = opts.dispatcher;
   const http = new HttpClient(httpClientOpts);
 
   const docsOnly = opts.tools === "docs-only";

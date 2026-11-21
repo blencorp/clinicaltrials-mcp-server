@@ -44,7 +44,7 @@ pnpm build && node dist/bin.js --http --port 8080
 ## Tests
 
 - `test/*.spec.ts` runs under vitest. Keep tests hermetic: either
-  `undici.MockAgent` for HTTP, `nock`-style setup, or a local JWKS server
+  an `undici.MockAgent` injected through the `HttpClient` `dispatcher` option for HTTP, or a local JWKS server
   for OAuth flows.
 - Sandbox tests use `selectSandbox({ mode: "isolate" })`; Deno tests are
   skipped automatically when `deno` is not on PATH.

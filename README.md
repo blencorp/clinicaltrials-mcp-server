@@ -528,7 +528,7 @@ allowlist or OWASP-managed rulesets, front Railway with Cloudflare
 ## Testing
 
 ```bash
-pnpm test                           # unit + integration (nock, MockAgent)
+pnpm test                           # unit + integration (undici MockAgent)
 CTGOV_LIVE=1 pnpm test              # also run the live CT.gov harness
 pnpm test -- test/embeddedEndToEnd.spec.ts   # single suite
 pnpm test:watch
