@@ -1,10 +1,11 @@
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import {
   isDenoAvailable,
   isIsolateAvailable,
   selectSandbox,
   type SandboxMode,
 } from "../sandbox/index.js";
+import type { Dispatcher } from "undici";
 import { buildMcpServer } from "./mcpServer.js";
 import { logger } from "../util/logger.js";
 
@@ -12,6 +13,8 @@ export interface StartOptions {
   sandboxMode?: SandboxMode;
   /** Subject attached to audit events when run in stdio (no OAuth). */
   subject?: string;
+  /** undici dispatcher for upstream requests (tests). */
+  dispatcher?: Dispatcher;
 }
 
 let processHooksInstalled = false;
@@ -59,26 +62,13 @@ export async function startStdioServer(opts: StartOptions = {}): Promise<void> {
     resolveExecutor: () => selectSandbox(opts.sandboxMode ? { mode: opts.sandboxMode } : {}),
   };
   if (opts.subject !== undefined) serverOpts.subject = opts.subject;
-  const server = buildMcpServer(serverOpts);
-  const transport = new StdioServerTransport();
-  transport.onerror = (error) => {
-    logger.error("transport.error", {
-      err: { name: error.name, message: error.message, stack: error.stack },
-    });
-  };
-  transport.onclose = () => {
-    logger.warn("transport.close");
-  };
-  server.onerror = (error) => {
-    logger.error("server.error", {
-      err: { name: error.name, message: error.message, stack: error.stack },
-    });
-  };
-  server.onclose = () => {
-    logger.warn("server.close");
-  };
-  // The connected transport's stdin listeners keep the server and transport reachable for
-  // the life of the process, so no module-level references are needed.
-  await server.connect(transport);
+  if (opts.dispatcher !== undefined) serverOpts.dispatcher = opts.dispatcher;
+  // `serveStdio` reports every out-of-band failure (transport start, a throwing factory,
+  // message-pump errors) through `onerror` and swallows it otherwise; without this the
+  // process would log `server.ready` and then answer every request with -32603 in silence.
+  serveStdio(() => buildMcpServer(serverOpts), {
+    onerror: (err) =>
+      logger.error("stdio.error", { err: { name: err.name, message: err.message, stack: err.stack } }),
+  });
   logger.info("server.ready", { transport: "stdio", executor: executorLabel });
 }

@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { buildCorpus, type FieldDoc } from "../search/corpus.js";
 
-export const DescribeSchemaInput = z.object({
-  path: z.string().optional(),
-  prefix: z.string().optional(),
-});
+export const DescribeSchemaInput = z
+  .object({
+    path: z.string().optional().describe("Exact dotted field path, e.g. 'protocolSection.identificationModule.nctId'"),
+    prefix: z.string().optional().describe("Path prefix to enumerate, e.g. 'protocolSection.statusModule'"),
+  })
+  .refine((v) => Boolean(v.path) !== Boolean(v.prefix), { message: "Provide exactly one of `path` or `prefix`" });
 
 export interface DescribeSchemaResult {
   matches: FieldDoc[];

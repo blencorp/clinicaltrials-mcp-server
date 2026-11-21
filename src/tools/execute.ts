@@ -5,9 +5,12 @@ import { buildRpcDispatch, CtGovRuntime } from "../sdk/runtime.js";
 import type { SandboxExecutor, SandboxResult } from "../sandbox/types.js";
 
 export const ExecuteInput = z.object({
-  code: z.string().min(1, "code is required"),
-  timeoutMs: z.number().int().min(100).max(60_000).optional(),
-  memoryMb: z.number().int().min(16).max(256).optional(),
+  code: z
+    .string()
+    .min(1, "code is required")
+    .describe("JavaScript to run in the sandbox: the body of `async (ctgov) => { ... }`; `return` a JSON-serializable value"),
+  timeoutMs: z.number().int().min(100).max(60_000).optional().describe("Wall-clock limit in milliseconds"),
+  memoryMb: z.number().int().min(16).max(256).optional().describe("Heap limit in MB (isolate sandbox only)"),
 });
 
 export interface ExecuteDeps {

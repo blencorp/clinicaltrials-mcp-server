@@ -2,8 +2,8 @@ import { z } from "zod";
 import { searchCorpus, type EndpointDoc, type FieldDoc } from "../search/corpus.js";
 
 export const SearchApiInput = z.object({
-  query: z.string().min(1, "query is required"),
-  k: z.number().int().min(1).max(25).optional(),
+  query: z.string().min(1, "query is required").describe("What you are looking for, in plain words, e.g. 'recruiting studies by condition'"),
+  k: z.number().int().min(1).max(25).optional().describe("Number of matches to return (default 8)"),
 });
 
 /**
