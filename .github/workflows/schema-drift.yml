@@ -13,13 +13,14 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: 10.33.0
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      # pnpm version is read from the "packageManager" field in package.json.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22.x"
+          node-version: "24"
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
 
@@ -30,35 +31,19 @@ jobs:
 
       - name: Open issue on drift
         if: steps.verify.outcome == 'failure'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const title = "Pinned ClinicalTrials.gov schema has drifted from upstream";
-            const body = [
-              "The weekly schema-drift job detected changes to",
-              "`https://clinicaltrials.gov/api/v2/openapi.json` that are not reflected",
-              "in `schema/openapi.pinned.json`.",
-              "",
-              "To refresh locally:",
-              "",
-              "```bash",
-              "pnpm regen:sdk",
-              "pnpm test",
-              "```",
-              "",
-              "Run: ${{ github.run_url }}",
-            ].join("\n");
-            const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: "open",
-              labels: "schema-drift",
-            });
-            if (existing.data.some(i => i.title === title)) return;
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body,
-              labels: ["schema-drift"],
-            });
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Pinned ClinicalTrials.gov schema has drifted from upstream
+        run: |
+          body="The weekly schema-drift job detected changes to \`https://clinicaltrials.gov/api/v2/openapi.json\` that are not reflected in \`schema/openapi.pinned.json\`.
+
+          To refresh locally: \`pnpm regen:sdk && pnpm test\`.
+
+          Run: $RUN_URL"
+          existing=$(gh issue list --state open --label schema-drift --limit 100 --json title \
+            --jq "map(select(.title == env.TITLE)) | length")
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$TITLE" --label schema-drift --body "$body"
+          fi
