@@ -5,7 +5,7 @@
  *   - /.well-known/oauth-protected-resource (RFC 9728) shape
  *   - /.well-known/oauth-authorization-server reachable or explicitly 404
  *   - POST /mcp without auth -> 401 + WWW-Authenticate + resource_metadata=...
- *   - /healthz -> 200
+ *   - /health -> 200
  *   - examples/ count >= 3
  *   - legal/{privacy-policy,terms,support}.md present
  *
@@ -41,8 +41,8 @@ await check("HTTPS target", async () => {
   if (!base.startsWith("https://")) throw new Error("base URL must be https://");
 });
 
-await check("GET /healthz returns 200", async () => {
-  const r = await fetch(`${base}/healthz`);
+await check("GET /health returns 200", async () => {
+  const r = await fetch(`${base}/health`);
   if (r.status !== 200) throw new Error(`status=${r.status}`);
 });
 

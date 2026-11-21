@@ -11,7 +11,7 @@ clerk_issuer = "https://clerk.blencorp.com"
 
 # Optional overrides.
 # clerk_jwks_url = "https://clerk.blencorp.com/.well-known/jwks.json"
-# scopes_supported = "ctgov.read"
+# scopes_supported = "ctgov:read"
 
 # Lock to Anthropic IP ranges. When enabling this for the directory listing,
 # make sure `anthropic_cidrs` is up to date.

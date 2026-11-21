@@ -54,7 +54,7 @@ variable "clerk_jwks_url" {
 variable "scopes_supported" {
   description = "Space-separated OAuth scopes advertised by PRM."
   type        = string
-  default     = "ctgov.read"
+  default     = "ctgov:read"
 }
 
 variable "allow_anthropic_ingress_only" {

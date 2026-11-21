@@ -60,7 +60,7 @@ resource "aws_lb_target_group" "tg" {
   deregistration_delay = 30
 
   health_check {
-    path                = "/healthz"
+    path                = "/health"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     timeout             = 5

@@ -13,7 +13,8 @@ resource "aws_ecs_cluster" "this" {
 }
 
 locals {
-  resource_url = "https://${var.domain}/mcp"
+  public_origin = "https://${var.domain}"
+  resource_url  = "${local.public_origin}/mcp"
   jwks_url     = var.clerk_jwks_url != "" ? var.clerk_jwks_url : "${trimsuffix(var.clerk_issuer, "/")}/.well-known/jwks.json"
 }
 
@@ -35,6 +36,9 @@ resource "aws_ecs_task_definition" "this" {
     image        = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
     essential    = true
     portMappings = [{ containerPort = 8080, protocol = "tcp" }]
+    # Authenticated serving must be explicit: the image's default command is the anonymous
+    # docs-only mode, and a task definition must never inherit it.
+    command = ["--http"]
     environment = [
       { name = "PORT", value = "8080" },
       { name = "HOST", value = "0.0.0.0" },
@@ -43,8 +47,14 @@ resource "aws_ecs_task_definition" "this" {
       { name = "CTGOV_AUTH_PROVIDER", value = "clerk" },
       { name = "CTGOV_AUTH_ISSUER", value = var.clerk_issuer },
       { name = "CTGOV_AUTH_JWKS_URL", value = local.jwks_url },
-      { name = "CTGOV_AUTH_RESOURCE", value = local.resource_url },
+      { name = "CTGOV_AUTH_AUDIENCE", value = local.resource_url },
       { name = "CTGOV_AUTH_SCOPES", value = var.scopes_supported },
+      # Trusted Host (DNS-rebinding defence) and the base of the OAuth metadata. Required when
+      # binding 0.0.0.0; the server refuses to start without it.
+      { name = "CTGOV_PUBLIC_ORIGIN", value = local.public_origin },
+      # The ALB appends the connecting client's address to X-Forwarded-For; the server reads its
+      # rightmost entry, the one the ALB added, so a client-forged left side is ignored.
+      { name = "CTGOV_CLIENT_IP_HEADER", value = "x-forwarded-for" },
     ]
     readonlyRootFilesystem = false
     user                   = "1001:1001"
@@ -60,7 +70,7 @@ resource "aws_ecs_task_definition" "this" {
       initProcessEnabled = true
     }
     healthCheck = {
-      command     = ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      command     = ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval    = 30
       timeout     = 5
       retries     = 3
