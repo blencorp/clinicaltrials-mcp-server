@@ -42,11 +42,13 @@ describe("buildMcpbManifest", () => {
     expect(manifest.compatibility.runtimes.node).toBe(">=20.10");
     expect(manifest.server.entry_point).toBe("dist/bin.js");
     expect(manifest.server.mcp_config.args).toEqual([
+      // eslint-disable-next-line no-template-curly-in-string -- MCPB host placeholder, not a JS template
       "${__dirname}/dist/bin.js",
       "--stdio",
       "--sandbox",
       "deno",
     ]);
+    // eslint-disable-next-line no-template-curly-in-string -- MCPB host placeholder, not a JS template
     expect(manifest.server.mcp_config.env.CTGOV_DENO_ROOT).toBe("${__dirname}/vendor/deno");
     expect(manifest.server.mcp_config.platform_overrides).toBeUndefined();
     expect(manifest.tools.map((tool) => tool.name)).toEqual([

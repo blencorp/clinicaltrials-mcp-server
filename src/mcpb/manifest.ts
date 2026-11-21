@@ -32,8 +32,10 @@ export function buildMcpbManifest(opts: BuildMcpbManifestOptions): Record<string
 
   const mcpConfig: McpbConfig = {
     command: "node",
+    // eslint-disable-next-line no-template-curly-in-string -- MCPB host placeholder, not a JS template
     args: ["${__dirname}/dist/bin.js", "--stdio", "--sandbox", "deno"],
     env: {
+      // eslint-disable-next-line no-template-curly-in-string -- MCPB host placeholder, not a JS template
       CTGOV_DENO_ROOT: "${__dirname}/vendor/deno",
     },
   };

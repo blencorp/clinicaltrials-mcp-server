@@ -90,7 +90,7 @@ await check("legal/{privacy-policy,terms,support}.md present", async () => {
 let failed = 0;
 for (const r of results) {
   const sigil = r.ok ? "PASS" : "FAIL";
-  // eslint-disable-next-line no-console
+   
   console.log(`${sigil}  ${r.name}${r.detail ? " — " + r.detail : ""}`);
   if (!r.ok) failed++;
 }
@@ -99,5 +99,5 @@ if (failed > 0) {
   console.error(`\n${failed} check(s) failed.`);
   process.exit(1);
 }
-// eslint-disable-next-line no-console
+ 
 console.log(`\nAll ${results.length} checks passed.`);

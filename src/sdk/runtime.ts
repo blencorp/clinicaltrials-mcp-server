@@ -113,7 +113,7 @@ export class CtGovRuntime {
     searchAreas: () => Promise<SearchArea[]>;
     enums: () => Promise<EnumDef[]>;
   } {
-    const self = this;
+    const { http, audit } = this;
     return {
       async search(params): Promise<StudiesPage> {
         let parsed: StudiesSearchParamsT;
@@ -122,10 +122,10 @@ export class CtGovRuntime {
         } catch (err) {
           rethrowSearchParamsError(err);
         }
-        return self.http.get<StudiesPage>({
+        return http.get<StudiesPage>({
           path: "/studies",
           query: parsed as Record<string, unknown>,
-          audit: self.audit,
+          audit: audit,
         });
       },
       searchAll(params, opts): AsyncIterable<Study> {
@@ -144,10 +144,10 @@ export class CtGovRuntime {
               pageSize,
               ...(pageToken !== undefined ? { pageToken } : {}),
             };
-            const page = await self.http.get<StudiesPage>({
+            const page = await http.get<StudiesPage>({
               path: "/studies",
               query: query as Record<string, unknown>,
-              audit: self.audit,
+              audit: audit,
             });
             for (const s of page.studies ?? []) yield s;
             if (!page.nextPageToken) return;
@@ -158,24 +158,24 @@ export class CtGovRuntime {
       async get(nctId, rest): Promise<Study> {
         const parsed = StudyGetParams.parse({ nctId, ...(rest ?? {}) });
         const { nctId: id, ...query } = parsed;
-        return self.http.get<Study>({
+        return http.get<Study>({
           path: `/studies/${encodeURIComponent(id)}`,
           query,
-          audit: self.audit,
+          audit: audit,
         });
       },
       async metadata(p): Promise<FieldNode[]> {
-        return self.http.get<FieldNode[]>({
+        return http.get<FieldNode[]>({
           path: "/studies/metadata",
           ...(p ? { query: p as Record<string, unknown> } : {}),
-          audit: self.audit,
+          audit: audit,
         });
       },
       async searchAreas(): Promise<SearchArea[]> {
-        return self.http.get<SearchArea[]>({ path: "/studies/search-areas", audit: self.audit });
+        return http.get<SearchArea[]>({ path: "/studies/search-areas", audit: audit });
       },
       async enums(): Promise<EnumDef[]> {
-        return self.http.get<EnumDef[]>({ path: "/studies/enums", audit: self.audit });
+        return http.get<EnumDef[]>({ path: "/studies/enums", audit: audit });
       },
     };
   }
@@ -185,25 +185,25 @@ export class CtGovRuntime {
     fieldValues: (p: FieldValueStatsParamsT) => Promise<unknown>;
     fieldSizes: (p: FieldSizeStatsParamsT) => Promise<unknown>;
   } {
-    const self = this;
+    const { http, audit } = this;
     return {
       async size() {
-        return self.http.get<unknown>({ path: "/stats/size", audit: self.audit });
+        return http.get<unknown>({ path: "/stats/size", audit: audit });
       },
       async fieldValues(params) {
         const parsed = FieldValueStatsParams.parse(params);
-        return self.http.get<unknown>({
+        return http.get<unknown>({
           path: "/stats/field/values",
           query: parsed as Record<string, unknown>,
-          audit: self.audit,
+          audit: audit,
         });
       },
       async fieldSizes(params) {
         const parsed = FieldSizeStatsParams.parse(params);
-        return self.http.get<unknown>({
+        return http.get<unknown>({
           path: "/stats/field/sizes",
           query: parsed as Record<string, unknown>,
-          audit: self.audit,
+          audit: audit,
         });
       },
     };
@@ -230,7 +230,7 @@ export function buildRpcDispatch(runtime: CtGovRuntime): RpcDispatch {
         return runtime.studies.get(nctId, rest);
       }
       case "studies.metadata":
-        return runtime.studies.metadata(args as {});
+        return runtime.studies.metadata(args as { includeIndexedOnly?: boolean; includeHistoricOnly?: boolean });
       case "studies.searchAreas":
         return runtime.studies.searchAreas();
       case "studies.enums":

@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const missing = [...livePaths].filter((p) => !pinnedPaths.has(p));
   const extra = [...pinnedPaths].filter((p) => !livePaths.has(p));
   if (missing.length === 0 && extra.length === 0) {
-    // eslint-disable-next-line no-console
+     
     console.log("Pinned schema paths match live API.");
     return;
   }

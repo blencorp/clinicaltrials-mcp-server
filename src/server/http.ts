@@ -199,7 +199,7 @@ export async function startHttpServer(
     );
   }
 
-  const server = createServer(async (req, res) => {
+  const onRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const traceId = randomUUID();
     res.setHeader("x-trace-id", traceId);
     let url: URL;
@@ -334,6 +334,9 @@ export async function startHttpServer(
       });
       if (!res.headersSent) sendJson(res, 500, { error: "internal_error", traceId });
     }
+  };
+  const server = createServer((req, res) => {
+    void onRequest(req, res);
   });
 
   interface Session {
@@ -438,7 +441,7 @@ export async function startHttpServer(
         if (id) sessions.delete(id);
       };
        
-      await mcp.connect(transport as any);
+      await mcp.connect(transport);
       session = {
         transport,
         close,
@@ -451,7 +454,7 @@ export async function startHttpServer(
 
     session.lastActivity = Date.now();
      
-    await session.transport.handleRequest(req as any, res);
+    await session.transport.handleRequest(req, res);
 
     const id = session.transport.sessionId;
     if (id && !sessions.has(id)) sessions.set(id, session);

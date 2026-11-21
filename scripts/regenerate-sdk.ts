@@ -50,15 +50,15 @@ function flatten(nodes: FieldNode[], prefix = ""): Array<{ path: string; type: s
 }
 
 async function main(): Promise<void> {
-  // eslint-disable-next-line no-console
+   
   console.log(`Fetching OpenAPI from ${BASE}/openapi.json ...`);
   const openapi = await getJson<Record<string, unknown>>("/openapi.json");
   const openapiPath = resolve("schema", "openapi.pinned.json");
   writeFileSync(openapiPath, JSON.stringify(openapi, null, 2) + "\n");
-  // eslint-disable-next-line no-console
+   
   console.log(`Wrote ${openapiPath}`);
 
-  // eslint-disable-next-line no-console
+   
   console.log(`Fetching /studies/metadata ...`);
   const meta = await getJson<FieldNode[]>("/studies/metadata");
   const fields = flatten(meta).slice(0, 600);
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
       2,
     ) + "\n",
   );
-  // eslint-disable-next-line no-console
+   
   console.log(`Wrote ${dictPath} with ${fields.length} fields`);
 }
 
