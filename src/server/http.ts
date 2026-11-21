@@ -243,7 +243,10 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
       onerror: (err) => logger.warn("mcp.handler.error", { error: truncate(err.message) }),
     },
   );
+  // The adapter buffers the body before the handler's own cap runs (its default is 4 MiB), so it
+  // gets the same cap: an oversized request is refused while it is still arriving.
   const nodeHandler = toNodeHandler(mcpHandler, {
+    maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
     onerror: (err) => logger.warn("mcp.adapter.error", { error: truncate(err.message) }),
   });
 

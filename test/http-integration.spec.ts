@@ -199,6 +199,21 @@ describe("anonymous endpoint (--insecure) in both protocol eras", () => {
     expect(ok.status).not.toBe(413);
   });
 
+  it("refuses an oversized body while it is still arriving", async () => {
+    // Announce 2 MiB but send only a little and never finish: a server that buffers the whole body
+    // before checking would wait forever; the cap must answer 413 from the length alone.
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(`${base}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "content-length": String(2 * 1024 * 1024) },
+      }, (res) => { res.resume(); resolve(res.statusCode ?? 0); req.destroy(); });
+      req.on("error", (err) => { if (!(err as NodeJS.ErrnoException).code?.startsWith("ECONNRESET")) reject(err); });
+      req.write('{"jsonrpc":"2.0"');
+      setTimeout(() => reject(new Error("no response before the body finished")), 5000).unref();
+    });
+    expect(status).toBe(413);
+  });
+
   it("refuses long-lived subscriptions/listen streams (maxSubscriptions 0)", async () => {
     const r = await rpc(base, "subscriptions/listen", { notifications: { toolsListChanged: true } });
     expect(r.body?.error ?? r.status).toBeTruthy();
