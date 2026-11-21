@@ -118,7 +118,7 @@ pnpm mcpb:pack
 That usually produces:
 
 ```text
-.mcpb/dist/clinicaltrial-mcp-server-<version>.mcpb
+clinicaltrials-mcp-server.mcpb
 ```
 
 Useful commands:

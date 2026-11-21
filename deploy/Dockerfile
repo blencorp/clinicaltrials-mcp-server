@@ -23,6 +23,21 @@ RUN pnpm build
 # Prune to production-only modules (keeps the prebuilt isolated-vm .node).
 RUN pnpm prune --prod
 
+# ---- Docs: the documentation site (site/, Astro Starlight), served at /docs ---------------
+# Its own pnpm root and lockfile. The build reads docs/sdk-reference.md and examples/*.js, and
+# its link check reads package.json and .github/workflows/release.yml.
+FROM node:26-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS docs
+WORKDIR /repo
+RUN npm install -g --ignore-scripts pnpm@12.21.0
+COPY site/package.json site/pnpm-lock.yaml site/pnpm-workspace.yaml ./site/
+RUN cd site && pnpm install --frozen-lockfile
+COPY site ./site
+COPY docs/sdk-reference.md ./docs/
+COPY examples ./examples
+COPY package.json ./
+COPY .github/workflows/release.yml ./.github/workflows/
+RUN cd site && pnpm build
+
 # ---- Deno: the process-isolated sandbox for authenticated HTTP serving ------
 # Authenticated HTTP runs execute only in a Deno subprocess (never in the server process).
 # Pinned by digest, the same build as uspto-mcp-server.
@@ -41,6 +56,9 @@ COPY --from=deno /deno /usr/local/bin/deno
 COPY --from=build --chown=ctgov:ctgov /app/node_modules ./node_modules
 COPY --from=build --chown=ctgov:ctgov /app/dist ./dist
 COPY --chown=ctgov:ctgov schema ./schema
+# The documentation site: a sibling of dist/ (never in the npm package), served at /docs by
+# --public-docs and by account mode.
+COPY --from=docs --chown=ctgov:ctgov /repo/site/dist ./docs-site
 COPY --chown=ctgov:ctgov package.json ./
 
 USER ctgov

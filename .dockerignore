@@ -13,3 +13,9 @@ test-results
 playwright-report
 video
 *.log
+.github
+!.github/workflows/release.yml
+site/dist
+site/.astro
+docs
+!docs/sdk-reference.md

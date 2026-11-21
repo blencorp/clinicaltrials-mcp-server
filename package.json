@@ -52,7 +52,7 @@
     "start": "node dist/bin.js",
     "mcpb:prepare": "tsx scripts/mcpb.ts prepare",
     "mcpb:validate": "tsx scripts/mcpb.ts validate",
-    "mcpb:pack": "tsx scripts/mcpb.ts pack",
+    "mcpb:pack": "tsx scripts/mcpb.ts validate && mcpb pack .mcpb/stage clinicaltrials-mcp-server.mcpb",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p web/e2e/tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
@@ -63,7 +63,7 @@
     "prepublishOnly": "pnpm build",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite build --watch --config web/vite.config.ts",
-    "test:web": "pnpm build:web && playwright test",
+    "test:web": "pnpm build:web && pnpm --dir site build && playwright test",
     "kit:check": "node scripts/portal-kit.mjs",
     "kit:update": "node scripts/portal-kit.mjs --update"
   },

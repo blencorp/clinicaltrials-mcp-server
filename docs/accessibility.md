@@ -30,6 +30,10 @@ Design tokens (`web/src/index.css`) are chosen for contrast: body and muted text
 on every surface they sit on; field borders and the focus ring at least 3:1 against their
 background (1.4.3, 1.4.11). Motion is disabled under `prefers-reduced-motion`.
 
+The documentation site (`site/`, served at `/docs`) gets the same axe rules in `web/e2e/docs.spec.ts`:
+every page and the 404 page, light and dark, at 1280 and 320 CSS px, with no horizontal scrolling. The
+test serves the built site through the server's own `/docs` handler.
+
 ## Manual checks
 
 Automated tools find only part of the problems. Before a release that changes the portal layout,

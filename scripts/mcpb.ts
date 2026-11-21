@@ -26,6 +26,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORK_DIR = join(ROOT, ".mcpb");
 const STAGE_DIR = join(WORK_DIR, "stage");
 const DIST_DIR = join(WORK_DIR, "dist");
+const BUNDLE_FILE = "clinicaltrials-mcp-server.mcpb";
 
 function runCommand(
   command: string,
@@ -90,7 +91,9 @@ async function stageBundle(): Promise<StageContext> {
 
   return {
     stageDir: STAGE_DIR,
-    outputPath: join(DIST_DIR, `clinicaltrial-mcp-server-${packageJson.version}.mcpb`),
+    // The name the documentation site's Claude Desktop button downloads from the latest release
+    // (site/src/lib/install.ts: the repository name), so it carries no version.
+    outputPath: join(ROOT, BUNDLE_FILE),
   };
 }
 

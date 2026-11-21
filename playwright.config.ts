@@ -10,8 +10,9 @@ if (process.env.TEST_DATABASE_URL && !process.env.JOURNEY_STATE) {
   process.env.JOURNEY_STATE = join(mkdtempSync(join(tmpdir(), 'ctgov-journey-')), 'state.json');
 }
 
-// Browser tests of the portal (web/). `pnpm test:web` builds it, serves dist/web with Vite's preview
-// server (client-side routes fall back to index.html), and mocks the portal and auth APIs per test
+// Browser tests of the portal (web/) and the documentation site (site/). `pnpm test:web` builds
+// both, serves dist/web with Vite's preview server (client-side routes fall back to index.html)
+// and site/dist through the server's own /docs handler, and mocks the portal and auth APIs per test
 // (web/e2e/fixtures.ts), so every page state can be checked without a server.
 export default defineConfig({
   testDir: 'web/e2e',
@@ -31,6 +32,12 @@ export default defineConfig({
     {
       command: 'pnpm exec vite preview --config web/vite.config.ts --host 127.0.0.1 --port 4173 --strictPort',
       url: 'http://127.0.0.1:4173',
+      reuseExistingServer: false,
+    },
+    {
+      // The built site through the server's real /docs handler (CSP, caching, 404 page).
+      command: 'pnpm exec tsx web/e2e/docs-server.ts',
+      url: 'http://127.0.0.1:4174/docs/',
       reuseExistingServer: false,
     },
     ...(process.env.TEST_DATABASE_URL
