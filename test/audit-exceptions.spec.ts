@@ -13,12 +13,6 @@ const EXCEPTIONS: Record<string, string> = {
   // 'GHSA-xxxx-xxxx-xxxx': 'package-name',
 };
 
-// TEMPORARY, remove with the zod 4 upgrade (package B). zod 3 is a production dependency, so it
-// cannot take the dev-only row above; its only fix is the zod 4 major.
-const PENDING_MAJOR: Record<string, string> = {
-  'GHSA-mrhx-c7xc-m3w5': 'zod',
-};
-
 const productionTree = (name: string) => {
   const r = spawnSync('pnpm', ['ls', '--prod', '--depth', 'Infinity', '--json', name], { encoding: 'utf8' });
   expect(r.status).toBe(0);
@@ -27,7 +21,7 @@ const productionTree = (name: string) => {
 
 describe('audit exceptions', () => {
   it('every advisory pnpm mutes at the root has a row here', () => {
-    expect(ignoredGhsas('.').sort()).toEqual([...Object.keys(EXCEPTIONS), ...Object.keys(PENDING_MAJOR)].sort());
+    expect(ignoredGhsas('.').sort()).toEqual(Object.keys(EXCEPTIONS).sort());
   });
 
   // The two halves of the per-row check, on packages whose answer is known.
