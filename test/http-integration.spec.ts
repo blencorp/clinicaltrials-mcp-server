@@ -196,8 +196,18 @@ describe("anonymous endpoint (--insecure) in both protocol eras", () => {
 
   it("refuses a body over 1 MiB with 413", async () => {
     const big = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { pad: "x".repeat(MAX_REQUEST_BODY_BYTES) } });
-    const r = await post(`${base}/mcp`, big);
-    expect(r.status).toBe(413);
+    // node:http, not fetch. The server refuses from Content-Length and closes while the body is still
+    // being written, so the client sees either the 413 or the closed connection (EPIPE/ECONNRESET)
+    // first. Either way the body is refused; the 413 itself is pinned by the next test.
+    const outcome = await new Promise<number | "closed">((resolve, reject) => {
+      const req = httpRequest(`${base}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "content-length": String(Buffer.byteLength(big)) },
+      }, (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+      req.on("error", (err) => { const code = (err as NodeJS.ErrnoException).code; if (code === "EPIPE" || code === "ECONNRESET") resolve("closed"); else reject(err); });
+      req.end(big);
+    });
+    expect([413, "closed"]).toContain(outcome);
     // ...while a body just under the cap is parsed (and answered, not rejected for size).
     const ok = await post(`${base}/mcp`, { jsonrpc: "2.0", id: 1, method: "tools/list", params: { pad: "x".repeat(MAX_REQUEST_BODY_BYTES - 1024) } });
     expect(ok.status).not.toBe(413);
@@ -211,7 +221,8 @@ describe("anonymous endpoint (--insecure) in both protocol eras", () => {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "content-length": String(2 * 1024 * 1024) },
       }, (res) => { res.resume(); resolve(res.statusCode ?? 0); req.destroy(); });
-      req.on("error", (err) => { if (!(err as NodeJS.ErrnoException).code?.startsWith("ECONNRESET")) reject(err); });
+      // The server answers and closes before the body is done, so the write may fail with EPIPE or ECONNRESET.
+      req.on("error", (err) => { const code = (err as NodeJS.ErrnoException).code; if (code !== "EPIPE" && code !== "ECONNRESET") reject(err); });
       req.write('{"jsonrpc":"2.0"');
       setTimeout(() => reject(new Error("no response before the body finished")), 5000).unref();
     });
