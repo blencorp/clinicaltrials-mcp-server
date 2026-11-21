@@ -1,0 +1,290 @@
+// Characterization: pins the v1 tool error envelopes (isError + one pretty-printed JSON text block)
+// and the places where a failure is reported WITHOUT isError. It pins v1 behaviour; later packages
+// update it via an explicit expected-diff list.
+import { describe, expect, it } from "vitest";
+import type { SandboxExecuteOptions, SandboxExecutor, SandboxResult } from "../../src/sandbox/types.js";
+import { SubjectQuota } from "../../src/supervisor/subjectQuota.js";
+import { call, connect, constantUpstream, type CallOutcome } from "./helpers.js";
+
+/** An executor whose behaviour is a function of the dispatch it is handed. */
+function executorWith(run: (opts: SandboxExecuteOptions) => Promise<Omit<SandboxResult, "calls">>): SandboxExecutor {
+  return {
+    kind: "deno",
+    async execute(opts) {
+      return { ...(await run(opts)), calls: [] };
+    },
+  };
+}
+
+/** Parses the single text block of an error envelope and checks it is 2-space pretty JSON. */
+function envelope(out: CallOutcome): Record<string, unknown> {
+  expect(out.isError).toBe(true);
+  expect(out.extraKeys).toEqual([]);
+  expect(out.texts).toHaveLength(1);
+  const parsed = JSON.parse(out.texts[0]!) as Record<string, unknown>;
+  expect(out.texts[0]).toBe(JSON.stringify(parsed, null, 2));
+  return parsed;
+}
+
+describe("argument validation errors (v1)", () => {
+  it("search_api without a query: ZodError as {name, message} where message is the JSON issue list", async () => {
+    const c = await connect({ tools: "docs-only" });
+    try {
+      const env = envelope(await call(c, "search_api", {}));
+      expect(Object.keys(env)).toEqual(["name", "message"]);
+      expect(env.name).toBe("ZodError");
+      expect(JSON.parse(env.message as string)).toEqual([
+        { code: "invalid_type", expected: "string", received: "undefined", path: ["query"], message: "Required" },
+      ]);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("search_api with an out-of-range k and an unknown key", async () => {
+    const c = await connect({ tools: "docs-only" });
+    try {
+      const big = envelope(await call(c, "search_api", { query: "x", k: 100 }));
+      expect(big.name).toBe("ZodError");
+      expect(JSON.parse(big.message as string)).toEqual([
+        {
+          code: "too_big",
+          maximum: 25,
+          type: "number",
+          inclusive: true,
+          exact: false,
+          message: "Number must be less than or equal to 25",
+          path: ["k"],
+        },
+      ]);
+      // Unknown keys are NOT rejected by the zod schema (non-strict z.object strips them).
+      const extra = await call(c, "search_api", { query: "x", bogus: true });
+      expect(extra.isError).toBeUndefined();
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("execute with empty code and an out-of-range timeout", async () => {
+    const c = await connect({ executor: executorWith(async () => ({ ok: true, logs: [], durationMs: 0, executor: "deno" })) });
+    try {
+      const env = envelope(await call(c, "execute", { code: "", timeoutMs: 5 }));
+      expect(env.name).toBe("ZodError");
+      expect(
+        (JSON.parse(env.message as string) as Array<{ path: string[]; message: string }>).map((i) => [i.path[0], i.message]),
+      ).toEqual([
+        ["code", "code is required"],
+        ["timeoutMs", "Number must be greater than or equal to 100"],
+      ]);
+    } finally {
+      await c.close();
+    }
+  });
+});
+
+describe("CtGovError envelopes (v1)", () => {
+  it("unknown tool: VALIDATION_ERROR", async () => {
+    const c = await connect({});
+    try {
+      expect(envelope(await call(c, "nope", {}))).toEqual({
+        name: "CtGovError",
+        code: "VALIDATION_ERROR",
+        message: "Unknown tool: nope",
+      });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("execute in docs-only mode is refused as an unknown tool, and never resolves a sandbox", async () => {
+    let resolved = 0;
+    const c = await connect({
+      tools: "docs-only",
+      resolveExecutor: () => {
+        resolved++;
+        throw new Error("must not be called");
+      },
+    });
+    try {
+      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({
+        name: "CtGovError",
+        code: "VALIDATION_ERROR",
+        message: "Unknown tool: execute",
+      });
+      expect(resolved).toBe(0);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("execute without an executor: INTERNAL_ERROR", async () => {
+    const c = await connect({});
+    try {
+      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({
+        name: "CtGovError",
+        code: "INTERNAL_ERROR",
+        message: "sandbox executor not configured",
+      });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("a host-side error thrown by the executor that is not a CtGovError keeps only name and message", async () => {
+    const c = await connect({
+      executor: executorWith(async () => {
+        throw new RangeError("nope");
+      }),
+    });
+    try {
+      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({ name: "RangeError", message: "nope" });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("nested studies.search keys: VALIDATION_ERROR with the flat-dotted-key hint", async () => {
+    const c = await connect({
+      executor: executorWith(async (opts) => {
+        await opts.dispatch("studies.search", { query: { cond: "x" }, filter: { geo: "y" } });
+        return { ok: true, logs: [], durationMs: 0, executor: "deno" };
+      }),
+    });
+    try {
+      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({
+        name: "CtGovError",
+        code: "VALIDATION_ERROR",
+        message:
+          'studies.search() uses flat dotted keys, not nested objects. Replace { query, filter: { ... } } with string keys like ' +
+          '"query.cond", "query.term", "filter.overallStatus", "filter.geo".',
+      });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("upstream 404: NOT_FOUND with status 404", async () => {
+    const upstream = constantUpstream({ status: 404 });
+    const c = await connect({
+      dispatcher: upstream.agent,
+      executor: executorWith(async (opts) => {
+        await opts.dispatch("studies.get", { nctId: "NCT00000000" });
+        return { ok: true, logs: [], durationMs: 0, executor: "deno" };
+      }),
+    });
+    try {
+      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({
+        name: "CtGovError",
+        code: "NOT_FOUND",
+        message: "Resource not found: /studies/NCT00000000",
+        status: 404,
+      });
+      expect(upstream.requests).toHaveLength(1);
+    } finally {
+      await c.close();
+      await upstream.close();
+    }
+  });
+
+  it("a bad NCT ID surfaces as a ZodError envelope (not a CtGovError)", async () => {
+    const c = await connect({
+      executor: executorWith(async (opts) => {
+        await opts.dispatch("studies.get", { nctId: "nct1" });
+        return { ok: true, logs: [], durationMs: 0, executor: "deno" };
+      }),
+    });
+    try {
+      const env = envelope(await call(c, "execute", { code: "return 1" }));
+      expect(env.name).toBe("ZodError");
+      expect(JSON.parse(env.message as string)).toEqual([
+        { validation: "regex", code: "invalid_string", message: "Invalid NCT ID", path: ["nctId"] },
+      ]);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("per-subject execute quota: RATE_LIMITED after the burst of 4", async () => {
+    const quota = new SubjectQuota({ executeRpm: 6 });
+    const c = await connect({
+      quota,
+      subject: "alice",
+      executor: executorWith(async () => ({ ok: true, result: 1, logs: [], durationMs: 0, executor: "deno" })),
+    });
+    try {
+      for (let i = 0; i < 4; i++) expect((await call(c, "execute", { code: "return 1" })).isError).toBeUndefined();
+      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({
+        name: "CtGovError",
+        code: "RATE_LIMITED",
+        message: "execute quota exceeded for subject (limit 6/min)",
+      });
+      // The quota is per subject: another subject has its own bucket.
+      const other = await connect({
+        quota,
+        subject: "bob",
+        executor: executorWith(async () => ({ ok: true, result: 1, logs: [], durationMs: 0, executor: "deno" })),
+      });
+      try {
+        expect((await call(other, "execute", { code: "return 1" })).isError).toBeUndefined();
+      } finally {
+        await other.close();
+      }
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("per-subject upstream quota: RATE_LIMITED once the 10-call burst is spent", async () => {
+    const upstream = constantUpstream({ studies: [] });
+    const quota = new SubjectQuota({ upstreamRpm: 60 });
+    const c = await connect({
+      quota,
+      subject: "carol",
+      dispatcher: upstream.agent,
+      executor: executorWith(async (opts) => {
+        for (let i = 0; i < 11; i++) await opts.dispatch("studies.get", { nctId: `NCT${String(i).padStart(8, "0")}` });
+        return { ok: true, logs: [], durationMs: 0, executor: "deno" };
+      }),
+    });
+    try {
+      expect(envelope(await call(c, "execute", { code: "return 1" }))).toEqual({
+        name: "CtGovError",
+        code: "RATE_LIMITED",
+        message: "upstream quota exceeded for subject (limit 60/min)",
+      });
+      expect(upstream.requests).toHaveLength(10);
+    } finally {
+      await c.close();
+      await upstream.close();
+    }
+  });
+});
+
+describe("execute ok:false is reported WITHOUT isError (v1)", () => {
+  it("timeout and throw results are ordinary results; only host-side failures set isError", async () => {
+    const timeout: Omit<SandboxResult, "calls"> = {
+      ok: false,
+      error: { name: "SandboxTimeout", message: "Sandbox wall-clock timeout", code: "SANDBOX_TIMEOUT" },
+      logs: [],
+      durationMs: 500,
+      executor: "deno",
+    };
+    const thrown: Omit<SandboxResult, "calls"> = {
+      ok: false,
+      error: { name: "Error", message: "boom", stack: "Error: boom\n    at <anonymous>", code: "SANDBOX_ERROR" },
+      logs: [],
+      durationMs: 3,
+      executor: "deno",
+    };
+    for (const result of [timeout, thrown]) {
+      const c = await connect({ executor: executorWith(async () => ({ ...result })) });
+      try {
+        const out = await call(c, "execute", { code: "return 1" });
+        expect(out.isError).toBeUndefined();
+        expect(JSON.parse(out.texts[0]!)).toEqual({ ...result, calls: [] });
+      } finally {
+        await c.close();
+      }
+    }
+  });
+});

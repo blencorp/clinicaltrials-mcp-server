@@ -1,0 +1,54 @@
+[
+  {
+    "name": "search_api",
+    "description": "Search the ClinicalTrials.gov SDK surface (see https://clinicaltrials.gov/data-api/api). Returns a TypeScript snippet describing the most relevant endpoints and study fields for your query. Use this before writing code for `execute`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "k": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Search ClinicalTrials.gov API surface",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "describe_schema",
+    "description": "Return doc entries for study-data fields by exact `path` or by `prefix`. Useful for discovering nested field names before projection. Field reference: https://clinicaltrials.gov/data-api/about-api/study-data-structure.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Describe ClinicalTrials.gov study fields",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

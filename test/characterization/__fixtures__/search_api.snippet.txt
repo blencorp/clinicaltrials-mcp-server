@@ -1,0 +1,80 @@
+// Top matches for: "recruiting studies by condition"
+
+// Quick reference — the ctgov SDK uses *flat dotted keys* (mirrors the v2 REST API).
+// Pass them as string keys; do NOT nest under a "query" or "filter" object.
+//
+//   const page = await ctgov.studies.search({
+//     "query.cond": "lung cancer",          // condition
+//     "query.term": "phase 3",              // free text
+//     "filter.overallStatus": ["RECRUITING"],
+//     "filter.geo": "distance(42.36,-71.06,50mi)",  // lat,lon,radius
+//     pageSize: 20,
+//     fields: ["NCTId","BriefTitle","OverallStatus","Phase","LocationFacility"],
+//   });
+//   return page.studies;
+//
+// Use ctgov.studies.searchAll(params) when you need all pages.
+
+
+// GET /studies/{nctId}
+// Fetch a single study by NCT ID
+// Parameters:
+  nctId: string; // 
+  fields?: string[]; // 
+  format?: string; // 
+  markupFormat?: string; // 
+// Example:
+// await ctgov.studies.get("NCT00000000", { /* opts */ });
+
+// field: protocolSection.statusModule.overallStatus (enum) — Overall status: RECRUITING, COMPLETED, TERMINATED, etc.
+
+// GET /studies/enums
+// Enum definitions used in study fields
+// Parameters:
+// Example:
+// await ctgov.studies.enums();
+
+// GET /studies/metadata
+// Field metadata for all study data points
+// Parameters:
+  includeIndexedOnly?: boolean; // 
+  includeHistoricOnly?: boolean; // 
+// Example:
+// await ctgov.studies.metadata();
+
+// GET /studies/search-areas
+// Named search areas (Essie) and the fields they cover
+// Parameters:
+// Example:
+// await ctgov.studies.searchAreas();
+
+// GET /studies
+// Search studies
+// Returns data of studies matching query and filter parameters. Results are paged via pageToken.
+// Parameters:
+  query.cond?: string; // Conditions or diseases (Essie expression). Example: `lung cancer`.
+  query.term?: string; // Free-text term across all study fields.
+  query.locn?: string; // Location filter (city, state, country).
+  query.titles?: string; // Title, official title, brief title search.
+  query.intr?: string; // Interventions / treatment.
+  query.outc?: string; // Outcome measures.
+  query.spons?: string; // Sponsor / collaborator.
+  query.lead?: string; // Lead sponsor name.
+  query.id?: string; // Study IDs (NCT, secondary).
+  query.patient?: string; // PatientSearch area (AND of symptom, condition).
+  filter.overallStatus?: string[]; // Filter by overall status (pipe-separated).
+  filter.geo?: string; // `distance(lat,lon,dist)` filter, e.g. `distance(39.0,-77.1,50mi)`.
+  filter.ids?: string[]; // NCT IDs to restrict to.
+  filter.advanced?: string; // Essie expression over any field, e.g. `AREA[StartDate]RANGE[2020-01-01, MAX]`.
+  postFilter.overallStatus?: string[]; // Post-filter (applied after aggregation stats).
+  aggFilters?: string; // Aggregation filters (UI-style).
+  geoDecay?: string; // `func(dist,offset,scale,weight)` decay function for geo.
+  fields?: string[]; // Field projection (dotted paths). E.g. `NCTId,BriefTitle,OverallStatus`.
+  sort?: string[]; // Sort keys. E.g. `LastUpdatePostDate:desc,EnrollmentCount`.
+  countTotal?: boolean; // Include totalCount in response.
+  pageSize?: number; // 
+  pageToken?: string; // Opaque pagination token returned from previous page.
+  format?: string; // 
+  markupFormat?: string; // 
+// Example:
+// await ctgov.studies.search({ /* params */ });
