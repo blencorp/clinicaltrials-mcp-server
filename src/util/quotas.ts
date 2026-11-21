@@ -2,7 +2,11 @@ import { LRUCache } from 'lru-cache';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export class SubjectQuota {
+/** What the hourly per-subject limit answers; `consume` may be asynchronous (account mode counts in PostgreSQL). */
+export interface QuotaVerdict { allowed: boolean; remaining?: number; resetAt: number }
+export interface SubjectLimiter { consume(subject: string): QuotaVerdict | Promise<QuotaVerdict> }
+
+export class SubjectQuota implements SubjectLimiter {
   private readonly counts: LRUCache<string, { count: number; resetAt: number }>;
   constructor(private readonly limit: number, private readonly windowMs: number = DAY_MS) {
     this.counts = new LRUCache({ max: 10_000, ttl: windowMs });

@@ -120,11 +120,17 @@ function printHelp(): void {
       "HTTP environment:",
       "  CTGOV_PUBLIC_ORIGIN    https://mcp.example.com (or CTGOV_ALLOWED_HOSTS) is required when",
       "                         binding beyond loopback: trusted Host values, DNS-rebinding defence",
-      "  CTGOV_AUTH_PROVIDER    generic-oidc | clerk | workos | auth0",
+      "  CTGOV_AUTH_PROVIDER    generic-oidc | clerk | workos | auth0 | accounts",
       "  CTGOV_AUTH_ISSUER      trusted token issuer",
       "  CTGOV_AUTH_AUDIENCE    audience tokens must carry (this server's /mcp URL)",
       "  CTGOV_AUTH_JWKS_URL    https JWKS endpoint of the issuer",
       "  CTGOV_AUTH_SCOPES      scopes every token must carry (default ctgov:read)",
+      "",
+      "Account mode (CTGOV_AUTH_PROVIDER=accounts, with --http; excludes --public-docs and --insecure):",
+      "  Google sign-in and OAuth for /mcp/account (execute); /mcp stays anonymous, docs-only. Needs",
+      "  CTGOV_PUBLIC_ORIGIN, DATABASE_URL (PostgreSQL), BETTER_AUTH_SECRET (32+ characters),",
+      "  GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET. Optional: CTGOV_SUBJECT_DAILY_QUOTA (10000),",
+      "  CTGOV_IP_RPS, CTGOV_IP_BURST, CTGOV_CLIENT_IP_HEADER, CTGOV_ALLOWED_ORIGINS.",
       "",
     ].join("\n"),
   );
@@ -162,23 +168,43 @@ function httpOptions(args: ParsedArgs, env: NodeJS.ProcessEnv): HttpServerOption
   } as HttpServerOptions;
 }
 
+/** Graceful shutdown (Railway and ECS send SIGTERM, Ctrl-C sends SIGINT). */
+function onShutdown(close: () => Promise<void>): void {
+  const shutdown = async (signal: string): Promise<void> => {
+    logger.info("shutdown.start", { signal });
+    try {
+      await close();
+    } catch (err) {
+      logger.warn("shutdown.error", { error: (err as Error).message });
+    }
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+}
+
 async function main(): Promise<void> {
   const env = process.env;
   const args = parseArgs(process.argv.slice(2), env);
+  if (env.CTGOV_AUTH_PROVIDER?.trim() === "accounts") {
+    // Hosting modes exclude each other: account mode needs a database and authenticates every
+    // execute, so it can never be started as (or alongside) an unauthenticated mode.
+    if (args.transport !== "http") throw new Error("CTGOV_AUTH_PROVIDER=accounts needs --http.");
+    if (args.publicDocs || args.insecure) {
+      throw new Error(`${args.publicDocs ? "--public-docs" : "--insecure"} cannot be combined with CTGOV_AUTH_PROVIDER=accounts: it would serve without the sign-in that mode is configured for. Unset the provider, or drop the flag.`);
+    }
+    const { loadAccountConfig } = await import("./accounts/config.js");
+    const { startAccountHttp } = await import("./accounts/runtime.js");
+    const handle = await startAccountHttp({
+      port: args.port, host: args.host, config: loadAccountConfig(env),
+      sandboxMode: args.sandbox, supervisor: supervisorConfig(env),
+    });
+    onShutdown(handle.close);
+    return;
+  }
   if (args.transport === "http") {
     const handle = await startHttpServer(httpOptions(args, env));
-    // Graceful shutdown (Railway and ECS send SIGTERM, Ctrl-C sends SIGINT).
-    const shutdown = async (signal: string): Promise<void> => {
-      logger.info("shutdown.start", { signal });
-      try {
-        await handle.close();
-      } catch (err) {
-        logger.warn("shutdown.error", { error: (err as Error).message });
-      }
-      process.exit(0);
-    };
-    process.on("SIGTERM", () => void shutdown("SIGTERM"));
-    process.on("SIGINT", () => void shutdown("SIGINT"));
+    onShutdown(handle.close);
     return;
   }
   if (args.insecure || args.publicDocs) {
