@@ -76,3 +76,7 @@ jobs:
           for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8080/health | grep -q '"protocol":"2026-07-28"'
           docker rm -f smoke
+      - name: Runs execute in the Deno sandbox behind bearer authentication, and refuses it docs-only
+        # Inside the image: an http JWKS URL is only accepted on loopback, and loopback is the container.
+        run: |
+          docker run --rm -v "$PWD/scripts/docker-smoke.mjs:/app/docker-smoke.mjs:ro" --entrypoint node clinicaltrial-mcp-server:ci docker-smoke.mjs
