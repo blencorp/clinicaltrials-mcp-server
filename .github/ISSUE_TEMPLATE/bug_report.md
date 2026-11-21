@@ -1,31 +1,38 @@
 ---
 name: Bug report
-about: Something is broken in clinicaltrial-mcp-server
+about: Something is broken or misbehaving
 labels: bug
 ---
 
-**Environment**
+## What happened?
 
-- `clinicaltrial-mcp-server` version: `<run `clinicaltrial-mcp-server --version`>`
-- Transport: stdio / http
-- Sandbox: isolate / deno
-- Node version: `<node -v>`
-- OS + arch:
+<!-- One paragraph. What did you expect? What did you see instead? -->
 
-**What happened?**
+## Reproduction
 
-<!-- A clear description of the bug. Include the exact command you ran. -->
-
-**What did you expect?**
-
-**Reproduction**
-
-```
-<minimal repro steps or code passed to `execute`>
+```bash
+# the exact command(s) you ran
 ```
 
-**Logs**
+```ts
+// if it's a sandbox issue, paste the code you passed to `execute`
+```
+
+## Environment
+
+- Server version: <!-- the version your MCP client shows for clinicaltrial-mcp-server, or git SHA; npm view shows the newest release, not the one you run -->
+- Transport: <!-- stdio | http -->
+- Sandbox runner: <!-- isolate | deno | unavailable -->
+- Node: <!-- node -v -->
+- OS / arch: <!-- e.g. Ubuntu 22.04 x64 -->
+- MCP client: <!-- Claude Desktop, custom, etc. -->
+
+## Logs
+
+<!-- Paste relevant log lines. Set CTGOV_LOG_LEVEL=debug for more detail.
+     Remove tokens and secrets first. -->
 
 ```
-<relevant lines from stderr>
 ```
+
+> **Security issue?** Please use a GitHub Security Advisory instead — see [SECURITY.md](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/SECURITY.md).

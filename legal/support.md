@@ -1,8 +1,8 @@
 # Support
 
 - **Email**: <opensource@blencorp.com>
-- **Issues**: <https://github.com/blencorp/claude-playground/issues>
-- **Security disclosures**: email `opensource@blencorp.com` with subject
+- **Issues**: <https://github.com/blencorp/clinicaltrials-mcp-server/issues>
+- **Security disclosures**: a [private security advisory](https://github.com/blencorp/clinicaltrials-mcp-server/security/advisories/new), or email `opensource@blencorp.com` with subject
   `[security] clinicaltrial-mcp-server`. We respond within 3 business days.
 
 ## Response SLO (best-effort, unpaid)

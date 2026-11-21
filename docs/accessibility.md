@@ -58,5 +58,8 @@ by the automated suite above; the screen-reader and browser-zoom passes are outs
 
 ## Reporting a problem
 
-Open an issue with the page, what you tried, your browser and assistive technology. Problems that
-block access are treated as bugs.
+[Open an issue](https://github.com/blencorp/clinicaltrials-mcp-server/issues/new?template=bug_report.md)
+with the page, what you tried, your browser and assistive technology, or write to
+opensource@blencorp.com if you cannot use the tracker (see [SUPPORT.md](../SUPPORT.md)). Problems
+that block access are treated as bugs. A change to `web/` or `site/` repeats the manual checks
+above for the pages it touches (the pull request template asks for it).

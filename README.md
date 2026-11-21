@@ -1,94 +1,37 @@
+# ClinicalTrials.gov MCP
+
+[![CI](https://github.com/blencorp/clinicaltrials-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/blencorp/clinicaltrials-mcp-server/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@blen/clinicaltrial-mcp-server.svg)](https://www.npmjs.com/package/@blen/clinicaltrial-mcp-server)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-24%20%7C%2026-339933.svg)](https://nodejs.org/)
+[![MCP](https://img.shields.io/badge/MCP-2026--07--28-7c3aed.svg)](https://modelcontextprotocol.io/specification/2026-07-28)
+
+**Ask your AI assistant real questions about registered clinical studies, and get answers grounded in the official ClinicalTrials.gov API.**
+
+**Documentation:** [clinicaltrials.mcp.blencorp.com/docs](https://clinicaltrials.mcp.blencorp.com/docs/) has connect buttons for Claude Desktop, Cursor and VS Code, recipes, and the SDK reference.
+
 <video src="assets/launch.mp4" controls width="600"></video>
 
-# ClinicalTrials.gov Explorer (by BLEN)
+This is a [Model Context Protocol](https://modelcontextprotocol.io) server that connects any MCP client (Claude Desktop and others) to the [ClinicalTrials.gov API v2](https://clinicaltrials.gov/data-api/api), the U.S. National Library of Medicine's registry of clinical studies: conditions, interventions, sponsors, phases, status, eligibility criteria, locations and contacts, outcomes and posted results.
 
-**MCP server for ClinicalTrials.gov.**
-Exposes the v2 REST API as a typed TypeScript SDK that the model calls from
-inside a secure sandbox, following Cloudflare's
-["code mode"](https://blog.cloudflare.com/code-mode/) pattern.
+Instead of bolting on dozens of rigid, narrow tools, it hands the model a small, well-documented SDK and lets it write the exact query it needs in JavaScript, then runs that code in a locked-down sandbox. This is the **code-mode** pattern ([Cloudflare's write-up](https://blog.cloudflare.com/code-mode/)), and it makes a wide API usable without overwhelming the model with tool definitions.
 
-> *Display name in the Claude directory:* **ClinicalTrials.gov Explorer (by BLEN)**.
-> Unaffiliated with NIH / NLM / ClinicalTrials.gov. Data retrieved live from
-> <https://clinicaltrials.gov/api/v2>.
+> **Disclaimer.** This software is for informational and educational purposes only. It is not medical advice, diagnosis or treatment, and it does not tell anyone whether they are eligible for a study or should join one: talk to a qualified clinician about your own care. Study records are registered by their sponsors and published by ClinicalTrials.gov; this project passes them through and does not verify them. It is an independent open-source project, not affiliated with or endorsed by the U.S. National Library of Medicine, the NIH or any government agency. BLEN and the authors assume no responsibility for errors, omissions or outcomes from its use.
 
----
+## API keys
 
-## Table of contents
+**No key needed.** ClinicalTrials.gov's API is public: the server sends none, stores none, and asks for none, on your computer or on the hosted service. The only thing that needs an account is the BLEN-hosted `execute` tool, which asks you to sign in with Google (see [Personal accounts](#personal-accounts-hosted-mode)); running the server yourself needs nothing.
 
-- [What "code mode" means here](#what-code-mode-means-here)
-- [Quickstart — use it with Claude Desktop (npx)](#quickstart--use-it-with-claude-desktop-npx)
-- [Build an MCPB desktop extension](#build-an-mcpb-desktop-extension)
-- [Local development](#local-development)
-  - [Prerequisites](#prerequisites)
-  - [Troubleshooting: `No sandbox executor available`](#troubleshooting-no-sandbox-executor-available)
-  - [Setup](#setup)
-  - [Running the server locally](#running-the-server-locally)
-  - [Point Claude Desktop at your dev checkout (stdio)](#point-claude-desktop-at-your-dev-checkout-stdio)
-  - [Useful scripts](#useful-scripts)
-- [Architecture at a glance](#architecture-at-a-glance)
-- [MCP tools](#mcp-tools)
-- [Configuration reference](#configuration-reference)
-- [Sandbox](#sandbox)
-- [Remote (hosted) mode](#remote-hosted-mode)
-- [AWS deploy](#aws-deploy)
-- [Directory submission](#directory-submission)
-- [Testing](#testing)
-  - [Behavior when no sandbox is installed](#behavior-when-no-sandbox-is-installed)
-- [Data handling](#data-handling)
-- [Contributing, support, license](#contributing-support-license)
+## Quickstart (Claude Desktop)
 
----
+**Claude Desktop extension.** Download `clinicaltrials-mcp-server.mcpb` from the [latest release](https://github.com/blencorp/clinicaltrials-mcp-server/releases/latest) and open it. There is nothing to fill in.
 
-## What "code mode" means here
-
-Rather than exposing each API operation as a separate MCP tool (the usual
-pattern, which quickly blows up the LLM's context), this server ships three
-tools:
-
-| Tool | Purpose |
-|---|---|
-| `search_api` | BM25 search over endpoints + study-field docs. Returns a TypeScript snippet the model should paste. |
-| `describe_schema` | Look up study-field docs by exact `path` or `prefix`. |
-| `execute` | Run a short async TypeScript body against a typed `ctgov` SDK in a sandboxed V8 isolate (or Deno fallback). |
-
-The full ClinicalTrials.gov surface fits in a few hundred tokens this way. The
-model writes one function, chains calls, filters locally, and returns results.
-
----
-
-## Quickstart — use it with Claude Desktop (npx)
-
-**Prerequisites**
-
-- **Node.js 20.10+** (`22.x` recommended when you want the smoothest
-  `isolated-vm` experience)
-- **One sandbox runtime** — the `execute` tool needs somewhere to run
-  untrusted code. You need **either**:
-  - `isolated-vm` (installed automatically by `pnpm install` / `npm install`
-    when prebuilt binaries exist for your platform, or when a C toolchain +
-    Python 3 are available for a native build), **or**
-  - the [Deno](https://deno.com) CLI on `PATH` as a fallback
-    (`brew install deno` on macOS,
-    `curl -fsSL https://deno.land/install.sh | sh` on Linux/WSL).
-
-If neither is present, the server will start but refuse `execute` calls with
-`No sandbox executor available`. See
-[Troubleshooting](#troubleshooting-no-sandbox-executor-available) for the
-fix.
-
-```bash
-# One-time sanity check
-npx -y @blen/clinicaltrial-mcp-server --version
-```
-
-Add to your Claude Desktop config
-(macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`,
-Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
+**Or with `npx`.** Add the server to your Claude Desktop config (**Settings → Developer → Edit Config**):
 
 ```json
 {
   "mcpServers": {
-    "ctgov": {
+    "clinicaltrials": {
       "command": "npx",
       "args": ["-y", "@blen/clinicaltrial-mcp-server"]
     }
@@ -96,510 +39,199 @@ Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
 }
 ```
 
-Restart Claude Desktop; the tools appear under the ClinicalTrials.gov Explorer
-entry.
+Restart Claude Desktop, then ask in plain language:
 
----
+> *"Which Phase 3 trials for melanoma are recruiting in Boston, and who sponsors them?"*
+> *"How many studies on type 2 diabetes registered each year since 2015?"*
+> *"Summarize the eligibility criteria of NCT04280705 as inclusion and exclusion bullets."*
 
-## Build an MCPB desktop extension
+Requires **Node.js 24 or 26** (LTS). `npx` downloads and runs the server on demand. If `execute` reports `SandboxUnavailable`, see [Sandbox runtimes](#sandbox-runtimes). To build the extension yourself: `pnpm build && pnpm mcpb:prepare && pnpm mcpb:pack`.
 
-This repo can now generate a Claude Desktop extension bundle (`.mcpb`) using
-Anthropic's MCPB workflow. The default bundle is **cross-platform for Claude
-Desktop on macOS and Windows**: it embeds the Deno helpers needed by the
-`execute` sandbox so end users do not have to install Deno themselves.
+You can also connect to the hosted server, `https://clinicaltrials.mcp.blencorp.com/mcp`, which offers the documentation tools anonymously (see [Personal accounts](#personal-accounts-hosted-mode)).
 
-Build the extension:
+## See it in action
 
-```bash
-pnpm install
-pnpm mcpb:pack
+> *"Which sponsors run the most recruiting Phase 3 cancer trials with 200 or more sites?"*
+
+The model finds the right calls with `search_api` and runs them in the sandbox:
+
+```js
+const sponsors = new Map();
+let pageToken;
+for (let page = 0; page < 25; page++) {
+  const res = await ctgov.studies.search({
+    'query.cond': 'cancer',
+    'filter.overallStatus': ['RECRUITING'],
+    'filter.advanced': 'AREA[Phase]PHASE3',
+    fields: ['NCTId', 'BriefTitle', 'LeadSponsorName', 'LocationFacility'],
+    pageSize: 200,
+    ...(pageToken ? { pageToken } : {}),
+  });
+  for (const s of res.studies) {
+    const sites = (s.protocolSection?.contactsLocationsModule?.locations ?? []).length;
+    if (sites < 200) continue;
+    const name = s.protocolSection?.sponsorCollaboratorsModule?.leadSponsor?.name ?? 'unknown';
+    sponsors.set(name, (sponsors.get(name) ?? 0) + 1);
+  }
+  pageToken = res.nextPageToken;
+  if (!pageToken) break;
+}
+return [...sponsors.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
 ```
 
-That usually produces:
+...then answers in plain English, citing the studies it found. More programs are in [`examples/`](./examples/).
+
+## What's covered
+
+| Need | Call |
+|---|---|
+| Find studies by condition, intervention, sponsor, location, title, outcome, status, phase, dates, distance | `ctgov.studies.search` (flat keys such as `query.cond`, `filter.overallStatus`, `filter.geo`, `filter.advanced`) |
+| One study's record, optionally only some fields | `ctgov.studies.get` |
+| What the study fields are called and mean | `ctgov.studies.metadata`, and `ctgov.fields.*` in `describe_schema` |
+| Which search areas exist, and the allowed enumeration values | `ctgov.studies.searchAreas`, `ctgov.studies.enums` |
+| Registry-wide counts and distributions of a field | `ctgov.stats.size`, `ctgov.stats.fieldValues`, `ctgov.stats.fieldSizes` |
+| The API's data version | `ctgov.version` |
+
+Full surface: [`docs/sdk-reference.md`](./docs/sdk-reference.md). It is read-only: the server never changes anything at ClinicalTrials.gov. Bulk download of the whole registry is not exposed.
+
+## How it works
+
+Three tools, in the order the model uses them:
+
+| Tool | What it does |
+|---|---|
+| `search_api(query, k?)` | BM25 over the SDK method docs and the study-field dictionary. Returns `{hits, note}`: entries with signatures and ready-to-run JavaScript. `k` defaults to 10 (at most 50). |
+| `describe_schema({ path? \| prefix? })` | Looks up an exact entry (`ctgov.studies.search`) or lists a namespace (`ctgov.fields.protocolSection.`). Exactly one of the two. |
+| `execute({ code, timeoutMs?, memoryMb? })` | Runs JavaScript (no type annotations; top-level `await`/`return` allowed) in the sandbox with `ctgov` as a global. `timeoutMs` defaults to 15 s (100 ms to 60 s), `memoryMb` to 64 (16 to 256). |
+
+All three are annotated read-only and non-destructive (`execute` is also `openWorldHint: true`) and publish an `outputSchema`. Results come back as compact JSON text plus the same object as `structuredContent`. A failed execution (thrown error, timeout, limit) is returned with `isError: true` and the full envelope, `{ ok: false, error: { name, message, status? }, logs, durationMs }`, so the model sees what went wrong. There is no `searchAll` helper: page by looping on `nextPageToken` with `pageToken`, as in the example above (every page is one call).
 
 ```text
-clinicaltrials-mcp-server.mcpb
+MCP client → execute(code) → sandbox → ctgov.* RPC bridge → host HttpClient (gate, cache, retry) → clinicaltrials.gov/api/v2
 ```
 
-Useful commands:
+Architecture: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Paste-ready examples: [`examples/`](./examples/).
+
+### ClinicalTrials.gov limits, and how the server respects them
+
+ClinicalTrials.gov publishes no rate limit, so the server keeps its own conservative one:
+
+- every request, from every caller, leaves through one process-wide gate: at most 10 requests per second (`CTGOV_RATE_PER_SEC`) and 8 in flight, with a wait of at most 15 s (`Promise.all` in sandbox code is safe but not faster);
+- on a `429` the gate pauses for the `Retry-After` and the call is retried once (a pause over 30 s fails at once with `RateLimited`); network errors and `5xx` retry up to three times with backoff;
+- one `execute()` may make at most 100 upstream calls (`CTGOV_MAX_CALLS_PER_EXECUTE`, `CallBudgetExceeded`), and an authenticated subject at most 3000 per hour (`CTGOV_SUBJECT_RATE_PER_HOUR`);
+- responses are cached for 5 minutes in memory, so repeated questions do not spend calls;
+- upstream bodies over 8 MiB fail with `ResponseTooLarge`, and a result over 256 KiB returned from `execute` with `ResultTooLarge`. **Always pass `fields`**: a full study record can be hundreds of KiB.
+
+## Personal accounts (hosted mode)
+
+`CTGOV_AUTH_PROVIDER=accounts` adds Google sign-in, an `/account` page, and OAuth/PKCE connections at `/mcp/account`. It is **keyless**: there is no key to save, so signing in is only how the server tells callers apart for fair-use limits (per-account hourly and daily quotas, and simultaneous executions). The anonymous `/mcp` endpoint offers only the documentation tools (`search_api`, `describe_schema`) and never calls ClinicalTrials.gov; `execute` requires signing in and runs only in the Deno sandbox. Account mode needs PostgreSQL and must be started with `--http` (the Docker image's default command is `--http --public-docs`, so override it); it cannot be combined with `--public-docs` or `--insecure`. See [docs/accounts.md](docs/accounts.md).
+
+## Sandbox runtimes
+
+`execute` needs a sandbox runner:
+
+1. **`isolated-vm`**: a fresh V8 isolate per execution, with a heap cap and a host-enforced deadline. `isolated-vm` 7 ships prebuilt binaries for Node 24 and 26 on macOS arm64, Linux x64/arm64 (glibc and musl) and Windows x64, so no compiler is needed. Preferred for single-user use (stdio, `--insecure` local HTTP).
+2. **Deno**: user code runs in a separate `deno` process with no permissions (no network, files, env or subprocesses), inside a Worker stripped of `Deno`, `fetch` and messaging globals; the server owns the deadline and kills the process group. Install [Deno](https://docs.deno.com/runtime/getting_started/installation/) and it is used when `isolated-vm` is unavailable, or always with `--sandbox deno` (`CTGOV_SANDBOX=deno`).
+3. **Authenticated HTTP serving** (OIDC or accounts) runs user code **only** in the Deno runner, a separate, killable process per execution. `--sandbox isolate` is refused there, and without Deno, `execute` reports `SandboxUnavailable` instead of falling back to in-process execution. The anonymous `--public-docs` mode needs no sandbox at all.
+4. If no runner is available, `search_api` and `describe_schema` still work; `execute` returns `SandboxUnavailable` with instructions.
+
+Every execution is bounded: code 256 KiB, returned value 256 KiB (`ResultTooLarge`), logs 64 KiB / 1,000 lines, SDK-call arguments 64 KiB, 100 pending calls. `memoryMb` is the V8 heap limit; on Deno the process is also killed when its resident memory grows by more than 2 × `memoryMb` + 96 MiB above its startup baseline (224 MiB at the default 64), so size a container for about 8 × that growth plus the Node server when 8 executions run at once. At most 8 executions run at once per server and 2 per authenticated subject (`CTGOV_MAX_CONCURRENT_EXECUTIONS`, `CTGOV_MAX_EXECUTIONS_PER_SUBJECT`); a client that cancels or disconnects stops its execution and any upstream calls in flight.
+
+## Self-hosting (remote HTTP)
 
 ```bash
-pnpm mcpb:prepare   # stage a clean production bundle under .mcpb/stage
-pnpm mcpb:validate  # validate the generated manifest with the official CLI
-pnpm mcpb:pack      # validate + pack the final .mcpb archive
+# Local, single user, no auth (binds 127.0.0.1 unless HOST/--host says otherwise):
+npx @blen/clinicaltrial-mcp-server --http --insecure --port 8080
+
+# Anonymous, docs-only (search_api + describe_schema, no execute, no sandbox, no database):
+CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
+  npx @blen/clinicaltrial-mcp-server --http --public-docs
+
+# Your own server, authenticated via an OIDC issuer.
+# Issuer, audience and an https JWKS URL are all required; Deno must be installed.
+CTGOV_AUTH_PROVIDER=clerk \
+CTGOV_AUTH_ISSUER=https://<tenant>.clerk.accounts.dev \
+CTGOV_AUTH_AUDIENCE=https://your-host.example.com/mcp \
+CTGOV_AUTH_JWKS_URL=https://<tenant>.clerk.accounts.dev/.well-known/jwks.json \
+CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
+  npx @blen/clinicaltrial-mcp-server --http
 ```
 
-Notes:
-
-- The bundle carries no Deno: `execute` runs in the `isolated-vm` sandbox that ships in the package
-  (prebuilt binaries for Node 24 and 26 on macOS arm64, Linux x64/arm64 and Windows x64). On another
-  platform `execute` reports why it is unavailable and the other two tools keep working.
-- Installation in Claude Desktop follows Anthropic's MCPB flow:
-  double-click the file, drag it into Claude Desktop, or use
-  `Developer -> Extensions -> Install Extension`.
-
----
-
-## Local development
-
-Clone the repo, install, run tests, and point Claude at your local checkout.
-
-### Prerequisites
-
-- Node.js **20.10+** (`22.x` recommended for native `isolated-vm`)
-- pnpm **10.33+** (`corepack enable && corepack prepare pnpm@10.33.0 --activate`)
-- **A sandbox runtime** — at least one of:
-  - `isolated-vm` (default, fastest). Native addon; installs via `pnpm install`.
-    Prebuilt binaries cover common platforms; when they don't, a C toolchain +
-    Python 3 is required (`build-essential` on Debian/Ubuntu;
-    `xcode-select --install` on macOS).
-  - [Deno](https://deno.com) — the subprocess fallback. Install with
-    `brew install deno` / `curl -fsSL https://deno.land/install.sh | sh`.
-- (Optional) Docker + BuildKit for the container build
-- (Optional) Terraform ≥ 1.7 and AWS CLI v2 for the AWS deploy module
-
-#### Troubleshooting: `No sandbox executor available`
-
-If `pnpm test` prints
-an `execute` result `SandboxUnavailable` ("No sandbox runner available ..."),
-your machine has neither sandbox configured. Pick **one**:
-
-**Easiest — install Deno** (works on every platform, no toolchain needed):
-
-```bash
-# macOS
-brew install deno
-# Linux / WSL
-curl -fsSL https://deno.land/install.sh | sh
-```
-
-Then re-run `pnpm test`. The sandbox-requiring tests will pick up Deno
-automatically; you'll see them pass instead of skip.
-
-**Alternative — make `isolated-vm` build locally**:
-
-```bash
-# macOS (Apple Silicon or Intel)
-xcode-select --install            # installs clang + headers
-# pnpm's prebuild fallback will invoke node-gyp against system Python 3
-
-# Debian / Ubuntu
-sudo apt-get install -y build-essential python3
-
-# Then rebuild just this native dep:
-pnpm rebuild isolated-vm
-node -e 'require("isolated-vm"); console.log("ok")'
-```
-
-If `pnpm install` finished with
-`Ignored build scripts: isolated-vm` — pnpm's approve-builds policy blocked
-the native compile. This repo ships `pnpm-workspace.yaml` with
-`onlyBuiltDependencies: [isolated-vm]` which should allow it; if it still
-complains, run `pnpm approve-builds` once and re-run `pnpm install`.
-
-Sandbox-requiring test suites (`sandbox.spec.ts`, `sandboxChaos.spec.ts`) **skip
-gracefully** when neither sandbox is available so the rest of the suite
-stays green.
-
-### Setup
-
-```bash
-git clone https://github.com/blencorp/claude-playground.git
-cd claude-playground
-cp .env.example .env               # edit values; see Configuration reference
-pnpm install                        # builds isolated-vm via node-gyp
-pnpm typecheck                      # strict TS pass
-pnpm lint                           # eslint
-pnpm test                           # ~60 tests, < 10s
-pnpm build                          # emits dist/
-```
-
-### Running the server locally
-
-Five modes:
-
-```bash
-# stdio transport (default) — what Claude Desktop uses over npx
-pnpm dev                            # tsx, hot source from src/
-# or after `pnpm build`:
-node dist/bin.js
-
-# Authenticated HTTP transport (bearer tokens from your OIDC provider, see "Remote mode")
-# Populate CTGOV_AUTH_* and CTGOV_PUBLIC_ORIGIN in .env
-export $(grep -v '^#' .env | xargs)   # or use `direnv`, `dotenv-cli`, etc.
-node dist/bin.js --http --port 8080
-
-# Anonymous, docs-only HTTP (search_api + describe_schema; no execute, no sandbox)
-node dist/bin.js --http --port 8080 --public-docs
-
-# HTTP transport with no auth (DEV ONLY; binds 127.0.0.1 — HOST is ignored, only --host overrides)
-node dist/bin.js --http --port 8080 --insecure
-
-# Force a specific sandbox
-node dist/bin.js --sandbox isolate    # or: deno | auto
-```
-
-### Point Claude Desktop at your dev checkout (stdio)
+Then point any MCP client at it:
 
 ```json
-{
-  "mcpServers": {
-    "ctgov-dev": {
-      "command": "node",
-      "args": ["/absolute/path/to/claude-playground/dist/bin.js"],
-      "env": {
-        "CTGOV_LOG_LEVEL": "debug"
-      }
-    }
-  }
-}
+{ "mcpServers": { "clinicaltrials": { "type": "http", "url": "https://your-host.example.com/mcp" } } }
 ```
 
-Use `"command": "npx"` with `"args": ["tsx", "src/bin.ts"]` if you prefer
-hot-reloading from source.
+The HTTP transport implements the stateless MCP `2026-07-28` Streamable HTTP profile (no `initialize` handshake and no `Mcp-Session-Id`) with a stateless legacy fallback for pre-2026 clients. It fails closed:
 
-### Useful scripts
+- `--http` without `--insecure` or `--public-docs` refuses to start unless real authentication is configured (an OIDC provider, or `accounts`). OIDC tokens must carry the configured issuer and audience, an expiry and a subject, use an asymmetric algorithm, and hold every scope in `CTGOV_AUTH_SCOPES` (default `ctgov:read`; otherwise `403 insufficient_scope`).
+- **Hosting modes exclude each other.** `--public-docs` or `--insecure` together with any configured auth provider (including `accounts`) is a startup error, as is `--public-docs` together with `--insecure`, and `accounts` without `--http`.
+- Listening on anything but loopback requires `CTGOV_PUBLIC_ORIGIN` or `CTGOV_ALLOWED_HOSTS` (with authentication, `CTGOV_PUBLIC_ORIGIN` specifically, because OAuth metadata must name the URL clients connect to; `GET /health` is exempt from the Host check): every request's `Host` must match the configured names (DNS-rebinding protection); the trusted origin is never taken from the request. On the anonymous endpoint, browser `Origin`s other than the server's own, loopback, or `CTGOV_ALLOWED_ORIGINS` get `403`; bearer-authenticated endpoints accept any Origin.
+- Request bodies are capped at 1 MiB, and tool arguments at a fixed number of elements.
 
-```bash
-pnpm dev                    # tsx src/bin.ts (stdio)
-pnpm test:watch             # vitest watch mode
-pnpm regen:sdk              # refresh pinned OpenAPI + field dictionary (needs network)
-pnpm verify:schema          # CI-grade drift check
-pnpm check:directory URL    # run the submission-directory checklist against a live URL
-pnpm build                  # tsc → dist/
-pnpm start                  # node dist/bin.js (stdio)
-```
+It also serves OAuth 2.0 Protected Resource Metadata (RFC 9728) and per-IP rate limiting. `GET /health` answers `{status, version, protocol}`; point platform health checks there.
 
----
+**Docker and Railway.** The [`Dockerfile`](./deploy/Dockerfile) runs on Node 26 (LTS) with Deno and the documentation site included. Its default command is `--http --public-docs` (the hosted anonymous docs-only service, which is what [`railway.json`](./railway.json) runs): set `CTGOV_PUBLIC_ORIGIN` (the image binds `0.0.0.0`), `CTGOV_CLIENT_IP_HEADER=x-real-ip` on Railway, and the health check path to `/health`. To offer `execute`, override the command with `--http` and configure an OIDC provider or account mode, as above. An AWS Terraform module is in [`deploy/aws/`](./deploy/aws/README.md). The gate, caches and per-IP limiter are in memory, so run **one replica** (and avoid deploys where an old and a new instance serve at the same time), or the process-wide upstream rate is no longer shared.
 
-## Architecture at a glance
+### Configuration
 
-```mermaid
-flowchart TD
-    Transport["Transport<br/>stdio &#124; Streamable HTTP + OAuth"]
-    Server["buildMcpServer<br/>tools: search_api, describe_schema, execute"]
-    Supervisor["SubjectQuota (per-sub + global 10 rps)<br/>HttpClient: undici, LRU, retry, zod, audit, stale-cache"]
-    Sandbox["Sandbox (isolated-vm &#124; deno)<br/>AST allow-list (acorn)<br/>ctgov.* SDK via RPC only"]
-    CTGov[("ClinicalTrials.gov v2")]
+Every environment variable the server reads (`src/bin.ts`, plus the log level) and its default. There is no dotenv: [`.env.example`](./.env.example) is documentation only.
 
-    Transport --> Server
-    Server --> Supervisor
-    Supervisor --> Sandbox
-    Supervisor --> CTGov
-```
-
-Details in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
-
----
-
-## MCP tools
-
-### `search_api(query, k?)`
-
-Semantic BM25 search over the 9 API endpoints and the curated study-field
-dictionary. Returns a TypeScript snippet the model should paste plus a short
-summary of hit counts.
-
-### `describe_schema(path? | prefix?)`
-
-Lookup for study-data fields by exact dotted `path` (e.g.
-`protocolSection.eligibilityModule.eligibilityCriteria`) or by `prefix`
-(e.g. `protocolSection.designModule`).
-
-### `execute(code, timeoutMs?, memoryMb?)`
-
-Wraps the submitted body as `async (ctgov) => { <body> }` and runs it in the
-sandbox. The return value is JSON-serialized and returned. The SDK surface
-inside the sandbox:
-
-```ts
-ctgov.studies.search(params)        // GET /studies
-ctgov.studies.get(nctId, params?)   // GET /studies/{nctId}
-ctgov.studies.metadata(params?)     // GET /studies/metadata
-ctgov.studies.searchAreas()         // GET /studies/search-areas
-ctgov.studies.enums()               // GET /studies/enums
-ctgov.stats.size()                  // GET /stats/size
-ctgov.stats.fieldValues({fields})   // GET /stats/field/values
-ctgov.stats.fieldSizes({fields})    // GET /stats/field/sizes
-ctgov.version()                     // GET /version
-```
-
-There is no `searchAll`: read more than one page with a `pageToken` loop, and pass `fields` to keep the
-result under 256 KiB. Runnable programs, including the paging recipe, live in [`examples/`](./examples);
-the full method reference is [`docs/sdk-reference.md`](./docs/sdk-reference.md).
-
----
-
-## Configuration reference
-
-All configuration is via environment variables. Copy
-[`.env.example`](./.env.example) to `.env` and edit.
-
-### Transport / runtime
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `PORT` | `8080` | HTTP port (used with `--http`). |
-| `HOST` | `0.0.0.0` | HTTP bind address. Binding beyond loopback needs `CTGOV_PUBLIC_ORIGIN` or `CTGOV_ALLOWED_HOSTS`. |
-| `CTGOV_PUBLIC_ORIGIN` | *(none)* | `https://mcp.example.com`: the public origin clients use. Its host is a trusted `Host`, and it is the base of the OAuth metadata (required for authenticated serving beyond loopback). |
-| `CTGOV_ALLOWED_HOSTS` | *(none)* | Extra trusted `Host` values, comma-separated. The request's own Host is never trusted; loopback on the listening port always is. `GET /health` is exempt. |
-| `CTGOV_ALLOWED_ORIGINS` | *(none)* | Extra `Origin` values accepted on the anonymous endpoint (`--public-docs`, `--insecure`). Bearer-authenticated endpoints accept any Origin. |
-| `CTGOV_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
-| `CTGOV_SANDBOX` | `auto` | `isolate` / `deno` / `auto`. Equivalent to `--sandbox`. |
-| `CTGOV_RATE_PER_SEC` | `10` | Upstream requests per second, process-wide (ClinicalTrials.gov publishes no limit). |
-| `CTGOV_MAX_CONCURRENT_EXECUTIONS` | `8` | Simultaneous `execute` runs, server-wide. Beyond it a call answers `Busy`. |
-| `CTGOV_MAX_EXECUTIONS_PER_SUBJECT` | `2` | Simultaneous runs per caller (the authenticated subject, or the client address on `--insecure`). |
-| `CTGOV_MAX_CALLS_PER_EXECUTE` | `100` | Upstream calls one `execute` may make. |
-| `CTGOV_SUBJECT_RATE_PER_HOUR` | `3000` | Upstream calls per authenticated subject per hour. |
-| `CTGOV_BASE_URL` | `https://clinicaltrials.gov/api/v2` | Upstream base URL (tests and mirrors). |
+| `PORT` | `8080` | HTTP listen port (`--port` overrides). |
+| `HOST` | `0.0.0.0` | HTTP bind address (`--host` overrides). `--insecure` ignores it and binds `127.0.0.1`. |
+| `CTGOV_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. Logs go to stderr. |
+| `CTGOV_SANDBOX` | `auto` | `auto` / `isolate` / `deno` (same as `--sandbox`). |
+| `CTGOV_BASE_URL` | `https://clinicaltrials.gov/api/v2` | Upstream base URL (tests, mirrors). |
+| `CTGOV_RATE_PER_SEC` | `10` | Upstream requests per second, process-wide (8 in flight). |
+| `CTGOV_MAX_CONCURRENT_EXECUTIONS` / `CTGOV_MAX_EXECUTIONS_PER_SUBJECT` | `8` / `2` | Simultaneous executions per server / per caller (`Busy` beyond). |
+| `CTGOV_MAX_CALLS_PER_EXECUTE` | `100` | Upstream calls per `execute()` (`CallBudgetExceeded`). |
+| `CTGOV_SUBJECT_RATE_PER_HOUR` | `3000` | Upstream calls per authenticated subject per hour (HTTP only). |
+| `CTGOV_AUTH_PROVIDER` | `none` | `none` (only with `--insecure`, `--public-docs` or stdio) / `generic-oidc` / `clerk` / `workos` / `auth0` / `accounts`. Unknown values stop startup. |
+| `CTGOV_AUTH_ISSUER` / `CTGOV_AUTH_AUDIENCE` / `CTGOV_AUTH_JWKS_URL` | none | Required for OIDC providers (JWKS over https; http only on loopback). The audience is normally `https://<host>/mcp`. |
+| `CTGOV_AUTH_SCOPES` | `ctgov:read` | Comma-separated scopes every token must carry; advertised in resource metadata. |
+| `CTGOV_PUBLIC_ORIGIN` | none | Public origin clients reach (OAuth metadata, trusted Host). Required for authenticated or account HTTP beyond loopback; otherwise `CTGOV_ALLOWED_HOSTS` can replace it. |
+| `CTGOV_ALLOWED_HOSTS` | none | Extra accepted `Host` values (comma-separated). |
+| `CTGOV_ALLOWED_ORIGINS` | none | Extra browser origins accepted on the anonymous `/mcp`. |
+| `CTGOV_IP_RPS` / `CTGOV_IP_BURST` | `5` / `20` | Per-IP token bucket on the HTTP transport. |
+| `CTGOV_CLIENT_IP_HEADER` | unset | Header your proxy overwrites with the client address (Railway: `x-real-ip`; AWS ALB: `x-forwarded-for`, rightmost entry). Unset keys the limiter on the TCP peer. |
+| `DATABASE_URL` | none | Account mode: a dedicated PostgreSQL database. |
+| `BETTER_AUTH_SECRET` | none | Account mode: a random secret of at least 32 characters. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | Account mode: Google OAuth web application (redirect URI `https://<origin>/api/auth/callback/google`). |
+| `CTGOV_SUBJECT_DAILY_QUOTA` | `10000` | Account mode: MCP requests per account per UTC day. |
+| `NODE_ENV` | production behaviour | Account mode: `development` or `test` allows an HTTP loopback `CTGOV_PUBLIC_ORIGIN`; anything else requires HTTPS. |
 
-### Auth
+CLI options: `--stdio` (default), `--http`, `--port`, `--host`, `--sandbox auto|isolate|deno`, `--public-docs`, `--insecure`, `--help`, `--version`. An unknown option or `--sandbox` value stops startup.
 
-Authenticated serving fails closed: an unknown provider, or a missing issuer, audience or `https` JWKS, stops startup.
-`--public-docs` and `--insecure` cannot be combined with a configured provider.
+## Security
 
-| Variable | Default | Description |
-|---|---|---|
-| `CTGOV_AUTH_PROVIDER` | `none` | `clerk` / `workos` / `auth0` / `generic-oidc` (all verify the same way) / `none`. |
-| `CTGOV_AUTH_ISSUER` | *(none)* | Trusted token issuer (`iss`). Required for a provider. |
-| `CTGOV_AUTH_AUDIENCE` | *(none)* | Audience (`aud`) tokens must carry, normally `https://<host>/mcp`. Required for a provider. |
-| `CTGOV_AUTH_JWKS_URL` | *(none)* | `https` JWKS endpoint of the issuer. Required for a provider (`http` only on loopback). |
-| `CTGOV_AUTH_SCOPES` | `ctgov:read` | Scopes a token must carry, **all** of them (whitespace- or comma-separated). |
+User code is sandboxed by design: no network, filesystem, env, or subprocess access, an `acorn` AST preflight, a host-enforced wall-clock deadline, byte budgets, and a V8 heap cap. The server holds no upstream credential at all (the API is public), and the secrets it does hold in account mode never enter the sandbox. The threat model is in [`SECURITY.md`](./SECURITY.md). Found a sandbox escape or auth bypass? Please open a [private Security Advisory](https://github.com/blencorp/clinicaltrials-mcp-server/security/advisories/new) rather than a public issue.
 
-Only asymmetric algorithms are accepted (RS/PS/ES/EdDSA) and a token needs `exp` and `sub`.
+## Contributing
 
-### Network / rate limiting
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the dev setup and ground rules, and please open an issue before anything non-trivial. For questions and help, see [`SUPPORT.md`](./SUPPORT.md). By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md). Upgrading from the `0.1.0-alpha.0` development line: [`docs/migration-0.1.md`](./docs/migration-0.1.md).
 
-| Variable | Default | Description |
-|---|---|---|
-| `CTGOV_CLIENT_IP_HEADER` | *(none)* | Header your reverse proxy overwrites with the client address (Railway: `x-real-ip`; AWS ALB: `x-forwarded-for`, whose rightmost entry the ALB adds). Unset keys the limiter on the TCP peer. Name only a header the proxy always overwrites. |
-| `CTGOV_IP_RPS` | `5` | Sustained per-IP request rate on `/mcp` and the OAuth metadata. `/health` is exempt. |
-| `CTGOV_IP_BURST` | `20` | Burst capacity per IP. Requests over the bucket get `429` with `Retry-After`. |
+## License
 
-### Tests / scripts
+[Apache-2.0](./LICENSE) © 2026 BLEN, Inc. See also [`NOTICE`](./NOTICE).
 
-| Variable | Description |
-|---|---|
-| `CTGOV_LIVE` | Set to `1` to enable `test/liveIntegration.spec.ts` (hits real CT.gov). |
-| `CTGOV_BASE` | Override the upstream base URL for the `regen:sdk` and `verify:schema` scripts. |
+## Hosted service policies
 
----
+The BLEN-hosted connector's [Privacy Policy](./legal/privacy-policy.md) and
+[Terms of Service](./legal/terms.md) describe data handling and conditions of
+use; [`legal/support.md`](./legal/support.md) lists response targets, and
+[`legal/submission-packet.md`](./legal/submission-packet.md) holds the Claude
+connector directory submission. The software remains licensed under Apache-2.0;
+self-hosted operators are responsible for their own policies.
 
-## Sandbox
+## Acknowledgements
 
-Auto-selects `isolated-vm` (V8 isolate, native addon) and falls back to a
-`deno` subprocess with `--no-prompt --allow-none --no-npm --no-remote` when
-the native addon isn't available. Both enforce identical policy:
-
-- No network, no filesystem, no env, no FFI, no subprocess.
-- AST preflight (acorn) rejects direct escape hatches like `import`,
-  dynamic `import()`, `eval`, `new Function`, `process`, `__host`, and
-  unsafe prototype access before execution. The runtime sandbox remains the
-  primary security boundary.
-- 15 s wall-clock, 64 MB V8 heap (`memoryMb`; on Deno resident memory may also grow by 2 × `memoryMb` + 96 MiB, 224 MiB at the default, before the process is killed); per-call overrides available
-  via `timeoutMs` / `memoryMb`.
-- Only capability: the `ctgov.*` binding proxied over host RPC.
-
-Force a specific executor:
-
-```bash
-clinicaltrial-mcp-server --sandbox isolate    # require isolated-vm
-clinicaltrial-mcp-server --sandbox deno       # require deno on PATH
-clinicaltrial-mcp-server --sandbox auto       # default
-```
+- The U.S. National Library of Medicine for publishing the ClinicalTrials.gov API and its OpenAPI specification, and the sponsors and investigators who register their studies.
+- The [Model Context Protocol](https://modelcontextprotocol.io) team for the spec and TypeScript SDK.
+- Cloudflare for describing the [code-mode](https://blog.cloudflare.com/code-mode/) pattern.
 
 ---
 
-## Remote (hosted) mode
-
-Run the same server over the MCP Streamable HTTP transport with a real
-OAuth Authorization Server in front.
-
-The transport is stateless: every `POST /mcp` is self-contained (2026-07-28 `_meta` plus
-`Mcp-Method`/`Mcp-Name` headers, or a legacy `initialize` on the same request path), there are no sessions, and
-`GET`/`DELETE /mcp` answer `405`. Bodies over 1 MiB are refused.
-
-### With an OIDC provider (Clerk, WorkOS, Auth0, any OIDC issuer)
-
-```bash
-export CTGOV_PUBLIC_ORIGIN=https://clinicaltrials.mcp.blencorp.com
-export CTGOV_AUTH_PROVIDER=clerk
-export CTGOV_AUTH_ISSUER=https://clerk.blencorp.com
-export CTGOV_AUTH_AUDIENCE=https://clinicaltrials.mcp.blencorp.com/mcp
-export CTGOV_AUTH_JWKS_URL=https://clerk.blencorp.com/.well-known/jwks.json
-export CTGOV_AUTH_SCOPES=ctgov:read
-node dist/bin.js --http --port 8080
-```
-
-The authorization server must support
-[RFC 7591 Dynamic Client Registration](https://datatracker.ietf.org/doc/html/rfc7591)
-so Claude can self-register, issue tokens whose audience is the `/mcp` URL (RFC 8707) and
-grant the `ctgov:read` scope. This server no longer hosts an authorization server of its own.
-
-Endpoints exposed:
-
-| Path | Purpose |
-|---|---|
-| `POST /mcp` | MCP Streamable HTTP, stateless. `GET`/`DELETE` return `405`. |
-| `GET /health` | Health: `{status, version, protocol}`. Exempt from the Host check and the rate limit. |
-| `GET /.well-known/oauth-protected-resource[/mcp]` | RFC 9728 PRM (CORS-open). `404` when nothing is protected. |
-
-Host validation (DNS rebinding): requests must carry a `Host` named by `CTGOV_PUBLIC_ORIGIN` or
-`CTGOV_ALLOWED_HOSTS` (or loopback on the listening port), else `421`. The anonymous endpoint also
-validates `Origin`; bearer-authenticated endpoints accept any `Origin` (hosted connectors send theirs).
-
-A missing/invalid bearer returns `401` with
-`WWW-Authenticate: Bearer resource_metadata="…"` pointing at the PRM; a token without a required scope returns `403` with `error="insufficient_scope"`.
-
----
-
-## AWS deploy
-
-Terraform module at [`deploy/aws/`](./deploy/aws/README.md) stands up:
-
-**ECS Fargate + ALB + ACM + Route 53 + Secrets Manager + CloudWatch Logs + WAFv2**
-
-on `clinicaltrials.mcp.blencorp.com`, with a GitHub Actions OIDC deployer role.
-The container is built from [`deploy/Dockerfile`](./deploy/Dockerfile)
-(multi-stage, non-root, tini, isolated-vm compiled in).
-
-```bash
-cd deploy/aws
-cp terraform.tfvars.example terraform.tfvars   # edit clerk_issuer, CIDRs, etc.
-terraform init
-terraform apply
-
-# Build & push first image
-ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-ECR=$(terraform output -raw ecr_repository_url)
-aws ecr get-login-password --region us-east-1 | \
-  docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.us-east-1.amazonaws.com"
-docker buildx build --platform linux/amd64 -t "$ECR:v0.1.0-alpha.0" -f deploy/Dockerfile . --push
-aws ecs update-service --cluster clinicaltrial-mcp-server --service clinicaltrial-mcp-server --force-new-deployment
-```
-
-Subsequent deploys happen automatically from
-[`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) on pushes to
-`main`.
-
----
-
-## Railway deploy (alternative)
-
-Railway can host the same container directly from
-[`deploy/Dockerfile`](./deploy/Dockerfile). Railway terminates TLS, manages
-the custom domain, and sets `PORT` and `x-real-ip` for you.
-
-1. **Create a service** pointing at this repo. Railway detects the Dockerfile
-   at `deploy/Dockerfile` (set the Dockerfile path in service settings).
-2. **Custom domain** — add `clinicaltrials.mcp.blencorp.com` and point the
-   CNAME from your DNS provider to the Railway target.
-3. **Environment variables**:
-
-   ```bash
-   CTGOV_PUBLIC_ORIGIN=https://clinicaltrials.mcp.blencorp.com   # required: the image binds 0.0.0.0
-   CTGOV_CLIENT_IP_HEADER=x-real-ip   # Railway overwrites it with the client address
-   # Only when serving authenticated (run the image with `--http`):
-   CTGOV_AUTH_PROVIDER=clerk
-   CTGOV_AUTH_ISSUER=https://clerk.blencorp.com
-   CTGOV_AUTH_AUDIENCE=https://clinicaltrials.mcp.blencorp.com/mcp
-   CTGOV_AUTH_JWKS_URL=https://clerk.blencorp.com/.well-known/jwks.json
-   CTGOV_AUTH_SCOPES=ctgov:read
-   CTGOV_IP_RPS=5          # optional tuning
-   CTGOV_IP_BURST=20       # optional tuning
-   ```
-4. **Health check path** — set to `/health` in Railway's service settings.
-
-The image starts the service with `--http --public-docs` by default (its `CMD`; `railway.json`
-says the same): anonymous and docs-only (`search_api`, `describe_schema`; no `execute`). To offer
-`execute`, configure auth as above and run the image with `--http` (override the command, e.g.
-`docker run … <image> --http`) — authenticated serving runs code only in the Deno process sandbox,
-which the image includes.
-
-Railway has no managed WAF. The in-process per-IP limiter (above) handles
-throttling, but if you want the AWS-equivalent Anthropic-only ingress
-allowlist or OWASP-managed rulesets, front Railway with Cloudflare
-(proxied CNAME, Full Strict TLS).
-
----
-
-## Testing
-
-```bash
-pnpm test                           # unit + integration (undici MockAgent)
-CTGOV_LIVE=1 pnpm test              # also run the live CT.gov harness
-pnpm test test/http-integration.spec.ts   # single suite (needs `pnpm build` for cli/exports specs)
-pnpm test:watch
-```
-
-CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests, build, CLI
-smoke-test, and a Docker image build on every PR. A weekly workflow
-(`.github/workflows/schema-drift.yml`) re-runs `pnpm verify:schema` and
-auto-files an issue when the pinned OpenAPI diverges from upstream.
-
-### Behavior when no sandbox is installed
-
-`pnpm test` inspects the host at startup and **skips sandbox-dependent
-suites cleanly** rather than failing when neither `isolated-vm` nor
-`deno` is available. Expected outcomes:
-
-| Host state | Expected `pnpm test` result |
-|---|---|
-| Both `isolated-vm` and `deno` installed | **59 passed / 6 skipped** (live integration + remaining Deno-parity). |
-| Only `isolated-vm` installed (CI, production) | **59 passed / 6 skipped**. |
-| Only `deno` installed (portable dev machines) | **~48 passed / ~17 skipped** (isolate-only chaos tests skip). |
-| Neither installed (fresh clone, no toolchain) | **42 passed / 23 skipped / 0 failed**. Install Deno or fix `isolated-vm` as in the [troubleshooting section](#troubleshooting-no-sandbox-executor-available) to make the rest pass. |
-
-The following suites opt in to `describe.skipIf(!isAnySandboxAvailable())`:
-
-- `test/sandbox.spec.ts`
-- `test/sandboxChaos.spec.ts` — isolate chunk uses `isIsolateAvailable()`
-
-A separate `test/liveIntegration.spec.ts` only runs under
-`CTGOV_LIVE=1` and hits the real ClinicalTrials.gov API; it is unrelated
-to the sandbox gating above.
-
----
-
-## Data handling
-
-- 5-minute in-memory response cache (per process, never persisted).
-- 30-day structured audit logs (OAuth `sub`, trace id, upstream URL, status,
-  duration, bytes). Used only for abuse response. No request bodies retained.
-- No PII beyond the OAuth subject is collected.
-
-Details: [`legal/privacy-policy.md`](./legal/privacy-policy.md).
-
----
-
-## Contributing, support, license
-
-- **Contributing**: see [CONTRIBUTING.md](./CONTRIBUTING.md).
-- **Security disclosures**: see [SECURITY.md](./SECURITY.md) or email
-  <opensource@blencorp.com> with subject `[security] clinicaltrial-mcp-server`.
-- **Conduct**: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
-- **Support**: <opensource@blencorp.com>; SLOs in
-  [`legal/support.md`](./legal/support.md).
-- **License**: [MIT](./LICENSE).
-
----
-
-## Disclaimer
-
-**THIS SOFTWARE IS FOR INFORMATIONAL AND EDUCATIONAL PURPOSES ONLY.**
-
-Dr. Ralph is an AI-assisted tool and is **NOT** a substitute for professional medical advice, diagnosis, or treatment. Always seek the advice of a qualified healthcare provider with any questions regarding a medical condition. Never disregard professional medical advice or delay seeking it because of something generated by this tool.
-
-**BLEN and the authors of this software assume no responsibility or liability for any errors, omissions, or outcomes arising from the use of this tool.** Use at your own risk.
-
-**Red Flag Handling:** Emergency symptoms (chest pain + SOB, sudden severe headache, etc.) are flagged prominently but the workflow continues to gather complete information.
-
-**Data Privacy:** Remind patients to redact sensitive information from files and answers.
-
----
-
-Built with ❤️ by [BLEN, Inc](https://www.blencorp.com).
-
-## About BLEN
-
-BLEN, Inc is a digital services company that provides Emerging Technology (ML/AI, RPA), Digital Modernization (Legacy to Cloud), and Human-Centered Web/Mobile Design and Development.
+Built by [BLEN, Inc](https://www.blencorp.com).
