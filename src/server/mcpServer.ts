@@ -1,8 +1,4 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import type { Dispatcher } from "undici";
 import { HttpClient } from "../supervisor/httpClient.js";
 import type { SandboxExecutor } from "../sandbox/types.js";
@@ -71,11 +67,11 @@ export function buildMcpServer(opts: BuildMcpServerOptions): Server {
   const docsOnly = opts.tools === "docs-only";
   const catalog = docsOnly ? TOOL_CATALOG.filter((tool) => tool.name !== "execute") : TOOL_CATALOG;
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: catalog,
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  server.setRequestHandler('tools/call', async (req) => {
     const { name, arguments: args } = req.params;
     try {
       if (name === "search_api") {

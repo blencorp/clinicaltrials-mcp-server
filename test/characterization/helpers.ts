@@ -1,7 +1,6 @@
 // Shared helpers for the characterization specs (not a spec itself).
 import { MockAgent } from "undici";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { buildMcpServer, type BuildMcpServerOptions } from "../../src/server/mcpServer.js";
 import { RateLimiter } from "../../src/supervisor/rateLimiter.js";
 import { HttpClient, type HttpClientOptions } from "../../src/supervisor/httpClient.js";

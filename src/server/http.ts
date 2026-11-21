@@ -1,6 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import type { AuthAdapter, Principal } from "../auth/adapter.js";
 import { buildAuthAdapter, loadAuthConfig, type AuthConfig } from "../auth/config.js";
 import { EmbeddedAs, type EmbeddedAsEndpointResult } from "../auth/embeddedAs.js";
@@ -340,7 +340,7 @@ export async function startHttpServer(
   });
 
   interface Session {
-    transport: StreamableHTTPServerTransport;
+    transport: NodeStreamableHTTPServerTransport;
     close: () => Promise<void>;
     lastActivity: number;
     subject?: string;
@@ -421,7 +421,7 @@ export async function startHttpServer(
       };
       if (principal?.sub) mcpOpts.subject = principal.sub;
       const mcp = buildMcpServer(mcpOpts);
-      const transport = new StreamableHTTPServerTransport({
+      const transport = new NodeStreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
       });
       const close = async () => {
