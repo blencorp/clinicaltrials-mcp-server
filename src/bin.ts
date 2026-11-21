@@ -8,6 +8,7 @@ interface ParsedArgs {
   transport: "stdio" | "http";
   sandbox?: SandboxMode;
   insecure?: boolean;
+  publicDocs?: boolean;
   port?: number;
   host?: string;
 }
@@ -19,6 +20,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (a === "--http") out.transport = "http";
     else if (a === "--stdio") out.transport = "stdio";
     else if (a === "--insecure") out.insecure = true;
+    else if (a === "--public-docs") out.publicDocs = true;
     else if (a === "--port") {
       const v = argv[++i];
       if (v) out.port = Number(v);
@@ -48,13 +50,18 @@ function printHelp(): void {
       "",
       "Usage:",
       "  clinicaltrial-mcp-server [--stdio|--http] [--sandbox isolate|deno|auto]",
-      "           [--port N] [--host ADDR] [--insecure]",
+      "           [--port N] [--host ADDR] [--public-docs | --insecure]",
       "",
       "Transports:",
       "  --stdio   (default) stdio transport for local clients (Claude Desktop)",
       "  --http    Streamable HTTP transport for remote clients",
       "",
-      "HTTP auth (required unless --insecure):",
+      "HTTP modes:",
+      "  (default)       authenticated; execute runs only in the Deno process sandbox",
+      "  --public-docs   anonymous, docs-only: search_api + describe_schema, no execute",
+      "  --insecure      local development only: no auth, binds 127.0.0.1 unless --host",
+      "",
+      "HTTP auth:",
       "  CTGOV_AUTH_PROVIDER=clerk",
       "  CTGOV_AUTH_ISSUER=https://<tenant>.clerk.accounts.dev",
       "  CTGOV_AUTH_RESOURCE=https://clinicaltrials.mcp.blencorp.com/mcp",
@@ -69,6 +76,7 @@ async function main(): Promise<void> {
     const httpOpts: Parameters<typeof startHttpServer>[0] = {};
     if (opts.sandbox !== undefined) httpOpts.sandboxMode = opts.sandbox;
     if (opts.insecure !== undefined) httpOpts.insecure = opts.insecure;
+    if (opts.publicDocs !== undefined) httpOpts.publicDocs = opts.publicDocs;
     if (opts.port !== undefined) httpOpts.port = opts.port;
     if (opts.host !== undefined) httpOpts.host = opts.host;
     await startHttpServer(httpOpts);

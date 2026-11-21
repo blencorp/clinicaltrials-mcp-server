@@ -7,7 +7,6 @@ import {
 } from "../sandbox/index.js";
 import { buildMcpServer } from "./mcpServer.js";
 import { logger } from "../util/logger.js";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
 export interface StartOptions {
   sandboxMode?: SandboxMode;
@@ -15,11 +14,6 @@ export interface StartOptions {
   subject?: string;
 }
 
-// Keep strong references for the process lifetime. Some hosts restart quickly
-// and we do not want transport/server objects becoming GC candidates after
-// startStdioServer() returns.
-let activeServer: Server | undefined;
-let activeTransport: StdioServerTransport | undefined;
 let processHooksInstalled = false;
 
 function installProcessDiagnostics(): void {
@@ -83,8 +77,8 @@ export async function startStdioServer(opts: StartOptions = {}): Promise<void> {
   server.onclose = () => {
     logger.warn("server.close");
   };
+  // The connected transport's stdin listeners keep the server and transport reachable for
+  // the life of the process, so no module-level references are needed.
   await server.connect(transport);
-  activeServer = server;
-  activeTransport = transport;
   logger.info("server.ready", { transport: "stdio", executor: executorLabel });
 }

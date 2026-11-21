@@ -30,8 +30,16 @@ export interface HttpServerOptions {
   port?: number;
   host?: string;
   sandboxMode?: SandboxMode;
-  /** When true, skip bearer validation (development only!). */
+  /**
+   * No authentication, for one developer on their own machine: binds 127.0.0.1 unless a host is
+   * given, and runs code in whichever sandbox is available.
+   */
   insecure?: boolean;
+  /**
+   * Anonymous public hosting: no authentication and docs-only tools (search_api,
+   * describe_schema). `execute` is not offered and no sandbox is created.
+   */
+  publicDocs?: boolean;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -132,19 +140,35 @@ function pickBearer(req: IncomingMessage): string | null {
 }
 
 export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ close: () => Promise<void>; port: number }> {
+  if (opts.insecure && opts.publicDocs) {
+    throw new Error("--insecure and --public-docs are mutually exclusive");
+  }
   const port = opts.port ?? Number(process.env.PORT ?? 8080);
-  const host = opts.host ?? process.env.HOST ?? "0.0.0.0";
+  // Without authentication and with code execution, listen on loopback unless told otherwise.
+  const host = opts.host ?? process.env.HOST ?? (opts.insecure ? "127.0.0.1" : "0.0.0.0");
 
   const authConfig: AuthConfig = loadAuthConfig();
-  const authAdapter: AuthAdapter | null = opts.insecure
-    ? null
-    : buildAuthAdapter(authConfig);
+  const unauthenticated = opts.insecure === true || opts.publicDocs === true;
+  const authAdapter: AuthAdapter | null = unauthenticated ? null : buildAuthAdapter(authConfig);
   const asFetcher: ASMetadataFetcher = makeASMetadataFetcher(authConfig);
-  const executorLabel = isIsolateAvailable()
-    ? "isolate"
-    : isDenoAvailable()
-      ? "deno"
-      : "unavailable";
+  // Authenticated serving runs many callers' code in one process: only Deno (a separate OS
+  // process) is allowed there. Fail at startup rather than on the first execute call.
+  const processIsolation = authAdapter !== null;
+  if (processIsolation && opts.sandboxMode === "isolate") {
+    throw new Error("--sandbox isolate is not allowed for authenticated HTTP serving; use --sandbox deno");
+  }
+  const toolSet = opts.publicDocs ? "docs-only" : "all";
+  const executorLabel = opts.publicDocs
+    ? "none"
+    : processIsolation
+      ? isDenoAvailable()
+        ? "deno"
+        : "unavailable"
+      : isIsolateAvailable()
+        ? "isolate"
+        : isDenoAvailable()
+          ? "deno"
+          : "unavailable";
   const quota = new SubjectQuota();
   const embeddedAs = authConfig.provider === "embedded" ? buildEmbeddedAs(authConfig) : null;
   const ipLimiter = new IpRateLimiter({
@@ -152,9 +176,9 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
     burst: Number(process.env.CTGOV_IP_BURST ?? 20),
   });
 
-  if (!authAdapter && !opts.insecure) {
+  if (!authAdapter && !unauthenticated) {
     throw new Error(
-      "HTTP transport requires auth configuration. Set CTGOV_AUTH_PROVIDER=clerk (or embedded) and CTGOV_AUTH_ISSUER, or pass --insecure (development only).",
+      "HTTP transport requires auth configuration. Set CTGOV_AUTH_PROVIDER=clerk (or embedded) and CTGOV_AUTH_ISSUER; for anonymous docs-only hosting pass --public-docs; for local development only, --insecure.",
     );
   }
 
@@ -190,7 +214,12 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
         return;
       }
       if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) {
-        sendJson(res, 200, { ok: true, executor: executorLabel, auth: authAdapter ? authConfig.provider : "off" });
+        sendJson(res, 200, {
+          ok: true,
+          executor: executorLabel,
+          auth: authAdapter ? authConfig.provider : "off",
+          tools: toolSet,
+        });
         return;
       }
 
@@ -365,8 +394,10 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
       }
       // Create a new session + transport + per-session MCP server.
       const mcpOpts: Parameters<typeof buildMcpServer>[0] = {
-        resolveExecutor: () => selectSandbox(opts.sandboxMode ? { mode: opts.sandboxMode } : {}),
+        resolveExecutor: () =>
+          selectSandbox({ ...(opts.sandboxMode ? { mode: opts.sandboxMode } : {}), processIsolation }),
         quota,
+        tools: toolSet,
       };
       if (principal?.sub) mcpOpts.subject = principal.sub;
       const mcp = buildMcpServer(mcpOpts);
@@ -417,6 +448,7 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ c
     transport: "http",
     executor: executorLabel,
     auth: authAdapter ? authConfig.provider : "off",
+    tools: toolSet,
     resource: authConfig.resource,
     port,
     host,

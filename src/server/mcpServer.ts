@@ -29,6 +29,12 @@ export interface BuildMcpServerOptions {
   subject?: string;
   /** Per-subject quota enforcer (HTTP transport). */
   quota?: SubjectQuota;
+  /**
+   * `docs-only` serves search_api + describe_schema and nothing else: `execute` is absent from
+   * tools/list, a direct call is rejected, and no sandbox is ever resolved. Used for anonymous
+   * public hosting, where no one may run code.
+   */
+  tools?: "all" | "docs-only";
 }
 
 const SERVER_INFO = {
@@ -58,8 +64,11 @@ export function buildMcpServer(opts: BuildMcpServerOptions): Server {
   }
   const http = new HttpClient(httpClientOpts);
 
+  const docsOnly = opts.tools === "docs-only";
+  const catalog = docsOnly ? TOOL_CATALOG.filter((tool) => tool.name !== "execute") : TOOL_CATALOG;
+
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_CATALOG,
+    tools: catalog,
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -80,7 +89,7 @@ export function buildMcpServer(opts: BuildMcpServerOptions): Server {
         const out = runDescribeSchema(input);
         return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
       }
-      if (name === "execute") {
+      if (name === "execute" && !docsOnly) {
         const input = ExecuteInput.parse(args ?? {});
         if (opts.quota && subject) opts.quota.tryConsumeExecute(subject);
         const execDeps: Parameters<typeof runExecute>[1] = { executor: resolveExecutor(), http };

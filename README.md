@@ -222,7 +222,7 @@ pnpm build                          # emits dist/
 
 ### Running the server locally
 
-Four modes:
+Five modes:
 
 ```bash
 # stdio transport (default) — what Claude Desktop uses over npx
@@ -235,7 +235,10 @@ node dist/bin.js
 export $(grep -v '^#' .env | xargs)   # or use `direnv`, `dotenv-cli`, etc.
 node dist/bin.js --http --port 8080
 
-# HTTP transport with no auth (DEV ONLY — do not expose publicly)
+# Anonymous, docs-only HTTP (search_api + describe_schema; no execute, no sandbox)
+node dist/bin.js --http --port 8080 --public-docs
+
+# HTTP transport with no auth (DEV ONLY; binds 127.0.0.1 unless --host is given)
 node dist/bin.js --http --port 8080 --insecure
 
 # Force a specific sandbox
@@ -508,6 +511,11 @@ the custom domain, and sets `PORT` + `x-forwarded-for` for you.
    CTGOV_IP_BURST=20       # optional tuning
    ```
 4. **Health check path** — set to `/healthz` in Railway's service settings.
+
+`railway.json` starts the service with `--http --public-docs`: anonymous and docs-only
+(`search_api`, `describe_schema`; no `execute`). To offer `execute`, configure auth as above, put
+Deno in the image, and drop `--public-docs` — authenticated serving runs code only in the Deno
+process sandbox.
 
 Railway has no managed WAF. The in-process per-IP limiter (above) handles
 throttling, but if you want the AWS-equivalent Anthropic-only ingress
