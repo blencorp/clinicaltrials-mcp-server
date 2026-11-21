@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { createServer, get as httpGet, type Server } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -258,7 +258,7 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     }
     expect(await (await fetch(`${config.origin}/api/portal/config`)).json()).toMatchObject({ google: true, email: false });
   });
-  it.skipIf(!webBuilt)('answers browser navigations with the portal pages for 404, 429 and 500, and API clients with short text (needs pnpm build)', async () => {
+  it.skipIf(!webBuilt)('answers browser navigations with the portal pages for 404 and 429, and API clients with short text (needs pnpm build)', async () => {
     // 404: the portal's not-found page; the removed /connect step is gone, not a portal route.
     for (const path of ['/no-such-page', '/connect']) {
       const page = await navigate(path);
@@ -281,20 +281,34 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     const limitedApi = await fetch(`${config.origin}/api/portal/account`, { headers: { 'x-real-ip': ip } });
     expect(limitedApi.status).toBe(429);
     expect(await limitedApi.text()).toBe('Too many requests');
-    // 500: an unexpected failure (the database errors) shows the portal's error page to a browser
-    // and JSON to an API client. Nothing of the failure is echoed.
-    const failing = () => vi.spyOn(store, 'allow').mockRejectedValueOnce(new Error('connection refused db.internal'));
-    const spy = failing();
-    const broken = await navigate('/mcp/account', { authorization: 'Bearer x', 'x-real-ip': '203.0.113.201' });
-    spy.mockRestore();
-    expect(broken.status).toBe(500);
-    expect(broken.type).toContain('text/html');
-    expect(broken.body).toContain('/assets/');
-    expect(broken.body).not.toContain('db.internal');
-    const spy2 = failing();
+    // 500 is covered below, which needs no web build.
+  });
+  it('answers a browser navigation that fails with an explicit error document, whatever the URL', async () => {
+    // The portal's index.html routes by the unchanged URL, so serving it for a failure under
+    // /api/auth/* (or any non-portal path) would render "Page not found". Nothing of the failure
+    // is echoed.
+    const failures: [string, () => { mockRestore(): void }, Record<string, string>][] = [
+      ['/api/portal/account', () => vi.spyOn(store, 'allow').mockRejectedValueOnce(new Error('connection refused db.internal')), { 'x-real-ip': '203.0.113.201' }],
+      ['/mcp/account', () => vi.spyOn(store, 'allow').mockRejectedValueOnce(new Error('connection refused db.internal')), { authorization: 'Bearer x', 'x-real-ip': '203.0.113.203' }],
+      ['/api/auth/get-session', () => vi.spyOn(service.auth, 'handler').mockRejectedValueOnce(new Error('connection refused db.internal')), { 'x-real-ip': '203.0.113.204' }],
+    ];
+    for (const [path, fail, headers] of failures) {
+      const spy = fail();
+      const broken = await navigate(path, headers);
+      spy.mockRestore();
+      expect(broken.status, path).toBe(500);
+      expect(broken.type, path).toContain('text/html');
+      expect(broken.body, path).toContain('<h1>Something went wrong</h1>');
+      expect(broken.body, path).not.toContain('/assets/');
+      expect(broken.body, path).not.toContain('db.internal');
+      expect(broken.csp, path).toContain("default-src 'none'");
+    }
+    // An API client keeps the JSON answer.
+    const spy = vi.spyOn(store, 'allow').mockRejectedValueOnce(new Error('connection refused db.internal'));
     const brokenApi = await fetch(`${config.origin}/mcp/account`, { headers: { authorization: 'Bearer x', 'x-real-ip': '203.0.113.202' } });
-    spy2.mockRestore();
+    spy.mockRestore();
     expect(brokenApi.status).toBe(500);
+    expect(brokenApi.headers.get('content-type')).toContain('application/json');
     expect(await brokenApi.text()).not.toContain('db.internal');
   });
   // The policy URLs are registered as the connector's privacy policy, so their text must be in the
@@ -454,27 +468,62 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     const [ra, rb] = await Promise.all([mcp(a.access_token, PROGRAM), mcp(b.access_token, PROGRAM)]);
     for (const r of [ra, rb]) { expect(r.status).toBe(200); expect(r.body).toContain('2.0.5'); }
   });
+  const freshAccount = async (name: string) => {
+    const user = await helper.saveUser(helper.createUser({ email: `${name}-${randomBytes(4).toString('hex')}@example.test`, emailVerified: true }));
+    return { ...await token(await login(user.id)), userId: user.id as string };
+  };
+  const studyReply = { statusCode: 200, data: { protocolSection: { identificationModule: { nctId: 'NCT00000001' } } }, responseOptions: { headers: { 'content-type': 'application/json' } } };
   it('applies hourly per-account limits in PostgreSQL, separately per account', async () => {
-    const c = await token(await login(carol.id)), d = await token(other);
-    mock.get(CTGOV_ORIGIN).intercept({ path: `${API}/version`, method: 'GET' }).reply(200, { apiVersion: '2.0.5' }, { headers: { 'content-type': 'application/json' } }).persist();
-    const many = 'const out = []; for (let i = 0; i < 7; i++) { try { out.push((await ctgov.version()).apiVersion); } catch (e) { out.push(e.name); } } return out;';
-    const first = JSON.parse((await mcp(c.access_token, many)).body).result.structuredContent.value as string[];
-    expect(first.filter(v => v === '2.0.5')).toHaveLength(HOURLY);
-    expect(first.filter(v => v === 'SubjectQuotaExceeded')).toHaveLength(7 - HOURLY);
-    // The counter is in the database, keyed by the hashed owner; another account is unaffected.
-    const bucket = await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(`ctgov:user:${carol.id}`)]);
-    expect(bucket.rows[0].count).toBeGreaterThan(HOURLY);
-    const bobOut = (await mcp(d.access_token, 'return (await ctgov.version()).apiVersion;')).body;
-    expect(bobOut).toMatch(/2\.0\.5|SubjectQuotaExceeded/);
-    // A fresh account still gets its own full allowance.
-    const e = await token(await login(alice.id));
-    expect((await mcp(e.access_token, 'return (await ctgov.version()).apiVersion;')).body).toMatch(/2\.0\.5|SubjectQuotaExceeded/);
+    const first = await freshAccount('quota-a'), second = await freshAccount('quota-b');
+    mock.get(CTGOV_ORIGIN).intercept({ path: `${API}/version`, method: 'GET' }).reply(200, { apiVersion: '2.0.5' }, { headers: { 'content-type': 'application/json' } }).times(2 * HOURLY);
+    const many = (n: number) => `const out = []; for (let i = 0; i < ${n}; i++) { try { out.push((await ctgov.version()).apiVersion); } catch (e) { out.push(e.name); } } return out;`;
+    const run = async (t: { access_token: string }, n: number) => JSON.parse((await mcp(t.access_token, many(n))).body).result.structuredContent.value as string[];
+    // Exhaust the first account: its full allowance, then refusals.
+    const used = await run(first, HOURLY + 2);
+    expect(used.filter(v => v === '2.0.5')).toHaveLength(HOURLY);
+    expect(used.filter(v => v === 'SubjectQuotaExceeded')).toHaveLength(2);
+    // The second account is untouched: its whole allowance succeeds (no refusal is acceptable
+    // before it), and only then does its own limit apply.
+    const other = await run(second, HOURLY + 1);
+    expect(other.slice(0, HOURLY)).toEqual(Array(HOURLY).fill('2.0.5'));
+    expect(other[HOURLY]).toBe('SubjectQuotaExceeded');
+    // The first account stays exhausted; the counter is in the database, keyed by the hashed owner.
+    expect(await run(first, 1)).toEqual(['SubjectQuotaExceeded']);
+    const count = async (userId: string) => (await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(`ctgov:user:${userId}`)])).rows[0].count;
+    expect(await count(first.userId)).toBeGreaterThan(HOURLY);
+    expect(await count(second.userId)).toBeGreaterThan(HOURLY);
   });
-  it('limits simultaneous executions per account with Busy, not a queue', async () => {
-    const a = await token(await login(carol.id));
-    const slow = 'await new Promise(r => setTimeout(r, 600)); return 1;';
-    const results = await Promise.all([1, 2, 3, 4].map(() => mcp(a.access_token, slow)));
-    expect(results.filter(r => r.body.includes('Busy')).length).toBeGreaterThanOrEqual(1);
+  it('limits simultaneous executions per account with Busy, not a queue, independent of other accounts', async () => {
+    const a = await freshAccount('busy-a'), b = await freshAccount('busy-b');
+    // Upstream replies are held until released, so executions overlap by construction (the Deno
+    // sandbox has no timers to hold them with).
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    let entered = 0;
+    mock.get(CTGOV_ORIGIN).intercept({ path: p => p.startsWith(`${API}/studies/NCT`), method: 'GET' }).reply(async () => { entered++; await gate; return studyReply; }).times(5);
+    const reached = (n: number) => vi.waitFor(() => expect(entered).toBeGreaterThanOrEqual(n), { timeout: 15_000, interval: 25 });
+    // Distinct studies, so nothing coalesces the held upstream requests into one.
+    let n = 0;
+    const call = (t: { access_token: string }) => mcp(t.access_token, `await ctgov.studies.get('NCT0000000${++n}'); return 'done';`);
+    const base = entered;
+    const held = [call(a), call(a)];
+    // A failing assertion must not leave the held executions waiting on the barrier.
+    onTestFinished(release);
+    await reached(base + 2);
+    // The per-account limit is 2: a third simultaneous execution is refused at once, not queued.
+    const refused = await call(a);
+    expect(refused.body).toContain('Busy');
+    expect(entered).toBe(base + 2);
+    // Another account is not affected by a's occupied slots.
+    const independent = call(b);
+    await reached(base + 3);
+    release();
+    for (const r of await Promise.all([...held, independent])) expect(r.body).toContain('done');
+    // Slots recover once the executions finish.
+    await vi.waitFor(async () => {
+      const again = await Promise.all([call(a), call(a)]);
+      for (const r of again) { expect(r.body).not.toContain('Busy'); expect(r.body).toContain('done'); }
+    }, { timeout: 15_000, interval: 100 });
   });
   it('supports the official MCP client and rejects expired, wrong-resource, under-scoped and disabled-client tokens', async () => {
     const a = await token();

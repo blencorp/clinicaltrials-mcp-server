@@ -79,12 +79,17 @@ function isNavigation(req: express.Request): boolean {
   return req.accepts(['json', 'html']) === 'html';
 }
 
-const TOO_MANY_PAGE = `<!doctype html>
+const standalonePage = (heading: string, message: string) => `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Too many requests · ClinicalTrials.gov MCP</title></head>
-<body><main><h1>Too many requests</h1><p>This address sent too many requests. Wait a minute, then <a href="/">try again</a>.</p></main></body>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${heading} · ClinicalTrials.gov MCP</title></head>
+<body><main><h1>${heading}</h1><p>${message}</p></main></body>
 </html>
 `;
+const TOO_MANY_PAGE = standalonePage('Too many requests', 'This address sent too many requests. Wait a minute, then <a href="/">try again</a>.');
+// The portal's index.html routes by the URL, which a failed request leaves unchanged (for example
+// /api/auth/*), so it would render "Page not found". A 500 gets its own document instead.
+const SERVER_ERROR_PAGE = standalonePage('Something went wrong', 'We could not complete this request. Please <a href="/">try again</a>.');
+const STANDALONE_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 
 /** MCP's rule for redirect URIs: HTTPS, or plain HTTP only to this computer. */
 export function allowedRedirect(value: unknown) {
@@ -230,7 +235,7 @@ export async function createAccountApp(
     res.status(429).set('Retry-After', '60');
     // A person in a browser gets a page; API clients get the short text they always did.
     if (isNavigation(res.req)) {
-      return res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'").type('html').send(TOO_MANY_PAGE);
+      return res.set('Content-Security-Policy', STANDALONE_CSP).type('html').send(TOO_MANY_PAGE);
     }
     return res.send('Too many requests');
   };
@@ -471,7 +476,7 @@ export async function createAccountApp(
       log.error('account.request_failed');
       if (res.headersSent) return;
       // A person in a browser gets the portal's own error page; API clients keep the JSON answer.
-      if (isNavigation(_req)) return void sendPortal(res, 500).catch(() => res.status(500).send('Unable to complete this request. Please try again.'));
+      if (isNavigation(_req)) return void res.status(500).set('Content-Security-Policy', STANDALONE_CSP).type('html').send(SERVER_ERROR_PAGE);
       res.status(500).json({ error: 'Unable to complete this request. Please try again.' });
     },
   );
