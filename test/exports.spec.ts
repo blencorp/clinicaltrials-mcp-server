@@ -17,12 +17,13 @@ const EXPORTS = [
   "MCP_PROTOCOL_VERSION",
   "SERVER_VERSION",
   "buildMcpServer",
-  "selectSandbox",
+  "buildSupervisor",
+  "pickSandbox",
   "startHttpServer",
   "startStdioServer",
 ];
-/** Exported in 0.1.0-alpha.0 and removed with the embedded authorization server. */
-const REMOVED = ["EmbeddedAs", "buildAuthAdapter", "loadAuthConfig"];
+/** Exported in 0.1.0-alpha.0 and removed: the embedded authorization server (B) and selectSandbox (C, replaced by pickSandbox). */
+const REMOVED = ["EmbeddedAs", "buildAuthAdapter", "loadAuthConfig", "selectSandbox"];
 
 const section = (): string => {
   const start = DOC.indexOf("## Public exports");
@@ -36,7 +37,7 @@ describe.skipIf(!built)("public entry point dist/index.js", () => {
     const mod = (await import(ENTRY)) as Record<string, unknown>;
     expect(Object.keys(mod).sort()).toEqual([...EXPORTS].sort());
     expect(mod.MCP_PROTOCOL_VERSION).toBe("2026-07-28");
-    for (const name of ["buildMcpServer", "selectSandbox", "startHttpServer", "startStdioServer"]) {
+    for (const name of ["buildMcpServer", "buildSupervisor", "pickSandbox", "startHttpServer", "startStdioServer"]) {
       expect(typeof mod[name], name).toBe("function");
     }
   });

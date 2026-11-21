@@ -3,8 +3,8 @@
 // protocol mistakes a hand-rolled request would encode identically on both sides.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, StreamableHTTPClientTransport, type VersionNegotiationOptions } from "@modelcontextprotocol/client";
-import { isDenoAvailable } from "../src/sandbox/deno.js";
-import { isIsolateAvailable } from "../src/sandbox/isolate.js";
+import { DenoRunner } from "../src/sandbox/deno.js";
+import { IsolateRunner } from "../src/sandbox/isolate.js";
 import { startHttpServer, type HttpHandle } from "../src/server/http.js";
 import { MCP_PROTOCOL_VERSION } from "../src/server/mcpServer.js";
 import { constantUpstream, type FakeUpstream } from "./characterization/helpers.js";
@@ -12,8 +12,10 @@ import { constantUpstream, type FakeUpstream } from "./characterization/helpers.
 let handle: HttpHandle;
 let url: URL;
 let upstream: FakeUpstream;
+let runner = false;
 
 beforeAll(async () => {
+  runner = (await new IsolateRunner().available()) || (await new DenoRunner().available());
   // Any upstream request outside the fake fails loudly (net connect is disabled).
   upstream = constantUpstream({ studies: [{ protocolSection: { identificationModule: { nctId: "NCT01234567" } } }], totalCount: 1 });
   handle = await startHttpServer({ port: 0, host: "127.0.0.1", insecure: true, ipRps: 1000, ipBurst: 1000, dispatcher: upstream.agent });
@@ -67,7 +69,11 @@ describe("official MCP client SDK", () => {
     try {
       const res = await client.callTool({ name: "search_api", arguments: { query: "recruiting studies by condition", k: 2 } });
       expect(res.isError).toBeFalsy();
-      expect(res.structuredContent).toMatchObject({ query: "recruiting studies by condition", hits: 2 });
+      // C9: {hits, note} with the shared entry shape (D6 is superseded).
+      const body = res.structuredContent as { hits: Array<{ id: string }>; note: string };
+      expect(body.hits).toHaveLength(2);
+      expect(body.hits[0]!.id).toMatch(/^ctgov\./);
+      expect(body.note).toMatch(/describe_schema/);
       const text = (res.content as Array<{ text?: string }>)[0]?.text ?? "";
       expect(JSON.parse(text)).toEqual(res.structuredContent);
       expect(text).not.toContain("\n  "); // compact JSON
@@ -87,8 +93,8 @@ describe("official MCP client SDK", () => {
     }
   });
 
-  const runner = isIsolateAvailable() || isDenoAvailable();
-  it.skipIf(!runner)("runs execute end to end: sandbox -> ctgov SDK -> (faked) clinicaltrials.gov, with isError on ok:false", async () => {
+  it("runs execute end to end: sandbox -> ctgov SDK -> (faked) clinicaltrials.gov, with isError on ok:false", async ({ skip }) => {
+    if (!runner) return skip();
     const client = await connect({ mode: "auto" });
     try {
       const ok = await client.callTool({
@@ -96,7 +102,7 @@ describe("official MCP client SDK", () => {
         arguments: { code: `const p = await ctgov.studies.search({ "query.cond": "flu", pageSize: 1 }); return { total: p.totalCount };`, timeoutMs: 10_000 },
       });
       expect(ok.isError).toBeFalsy();
-      expect(ok.structuredContent).toMatchObject({ ok: true, result: { total: 1 } });
+      expect(ok.structuredContent).toMatchObject({ ok: true, value: { total: 1 } });
       const failed = await client.callTool({ name: "execute", arguments: { code: `throw new Error("boom");`, timeoutMs: 10_000 } });
       expect(failed.isError).toBe(true);
       expect(failed.structuredContent).toMatchObject({ ok: false, error: { message: "boom" } });

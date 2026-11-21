@@ -3,9 +3,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createMcpHandler, type AuthInfo, type McpRequestContext } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import type { Dispatcher } from "undici";
-import { ResponseCache } from "../supervisor/cache.js";
-import { SubjectQuota, type SubjectQuotaOptions } from "../supervisor/subjectQuota.js";
-import { isDenoAvailable, isIsolateAvailable, selectSandbox, type SandboxMode } from "../sandbox/index.js";
+import type { SandboxKind } from "../sandbox/types.js";
+import { buildSupervisor, resolveSupervisorConfig, type SupervisorConfig } from "../supervisor/index.js";
+import type { CatalogDeps } from "./toolCatalog.js";
+import type { RequestCtx } from "../tools/execute.js";
 import { logger } from "../util/logger.js";
 import { AuthConfigError, InsufficientScopeError, buildVerifier, type AuthConfig } from "./authz.js";
 import { IpRateLimiter, clientIp } from "./ipRateLimiter.js";
@@ -21,7 +22,7 @@ export interface HttpServerOptions {
   port?: number;
   host?: string;
   /** Sandbox runner for `execute` (CTGOV_SANDBOX / --sandbox, resolved by the caller). */
-  sandboxMode?: SandboxMode;
+  sandboxMode?: SandboxKind;
   /**
    * No authentication, for one developer on their own machine: runs code in whichever sandbox
    * is available. Cannot be combined with `publicDocs` or with a configured auth provider.
@@ -56,10 +57,12 @@ export interface HttpServerOptions {
    * (Railway: `x-real-ip`). Unset keys the per-IP limit on the TCP peer.
    */
   clientIpHeader?: string;
-  /** Per-subject fair-use limits. */
-  quota?: SubjectQuotaOptions;
+  /** Limits and upstream settings (bin.ts maps the environment onto this); defaults otherwise. */
+  supervisor?: Partial<SupervisorConfig>;
   /** undici dispatcher for upstream requests (tests inject a MockAgent). */
   dispatcher?: Dispatcher;
+  /** Prebuilt dependencies (tests); the caller then owns the sandbox and the shutdown signal. */
+  deps?: CatalogDeps;
 }
 
 export interface HttpHandle {
@@ -73,6 +76,8 @@ const HEALTH_PATH = "/health";
 
 /** Key the tool-catalog context off the subject this request authenticated as. */
 const SUBJECT_KEY = "ctgov.subject";
+/** Client address of an unauthenticated caller, for execution admission (never for quotas). */
+const CLIENT_KEY = "ctgov.client";
 
 /** Largest MCP request body accepted (execute takes a code string of at most a few KiB). */
 export const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
@@ -106,9 +111,13 @@ export function bearerToken(header: string | undefined): string | undefined {
   return /^bearer +(\S+)$/i.exec(header ?? "")?.[1];
 }
 
-function subjectOf(ctx: McpRequestContext): string | undefined {
-  const s = ctx.authInfo?.extra?.[SUBJECT_KEY];
-  return typeof s === "string" ? s : undefined;
+function requestCtxOf(ctx: McpRequestContext): RequestCtx {
+  const subject = ctx.authInfo?.extra?.[SUBJECT_KEY];
+  const client = ctx.authInfo?.extra?.[CLIENT_KEY];
+  return {
+    ...(typeof subject === "string" ? { subject } : {}),
+    ...(typeof client === "string" ? { client } : {}),
+  };
 }
 
 function reply(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -195,44 +204,32 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
   if (processIsolation && opts.sandboxMode === "isolate") {
     throw new Error("the isolate sandbox (--sandbox isolate / CTGOV_SANDBOX=isolate) is not allowed for authenticated HTTP serving; use deno");
   }
-  if (processIsolation && !isDenoAvailable()) {
+  const toolSet = publicDocs ? "docs-only" : "all";
+  // Aborts every running execution when the server closes.
+  const shutdown = new AbortController();
+  // Built once: the HTTP client (cache, upstream gate), the sandbox and the limiters are shared by
+  // every request; the transport only builds a thin MCP server per request on top of them.
+  const deps = opts.deps ?? await buildSupervisor(resolveSupervisorConfig({
+    ...opts.supervisor,
+    tools: toolSet,
+    processIsolation,
+    shutdownSignal: shutdown.signal,
+    ...(opts.sandboxMode ? { sandbox: opts.sandboxMode } : {}),
+    ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
+  }));
+  if (processIsolation && deps.sandbox && deps.sandbox.kind !== "deno") {
     logger.warn("http.deno_missing", {
-      note: "authenticated serving runs execute only in Deno and deno is not on PATH: every execute call will fail",
+      note: "authenticated serving runs execute only in Deno and Deno is not available: every execute call will fail",
     });
   }
-  const toolSet = publicDocs ? "docs-only" : "all";
-  const executorLabel = publicDocs
-    ? "none"
-    : processIsolation
-      ? isDenoAvailable()
-        ? "deno"
-        : "unavailable"
-      : isIsolateAvailable()
-        ? "isolate"
-        : isDenoAvailable()
-          ? "deno"
-          : "unavailable";
+  const executorLabel = deps.sandbox?.kind ?? "none";
 
   const limiter = new IpRateLimiter(opts.ipRps ?? 5, opts.ipBurst ?? 20);
-  const quota = new SubjectQuota(opts.quota);
-  // One cache for the whole process: the transport is stateless, so every request builds its own
-  // MCP server. ClinicalTrials.gov data is public and identical for everyone.
-  const cache = new ResponseCache({ maxEntries: 500, ttlMs: 5 * 60_000 });
-
   // Stateless: the factory runs once per request, so the subject a tool sees is always the one
   // this request's own bearer token verified as. There is no session to bind, reuse, or outlive
   // a token.
   const mcpHandler = createMcpHandler(
-    (ctx) =>
-      buildMcpServer({
-        resolveExecutor: () =>
-          selectSandbox({ ...(opts.sandboxMode ? { mode: opts.sandboxMode } : {}), processIsolation }),
-        quota,
-        cache,
-        tools: toolSet,
-        ...(subjectOf(ctx) !== undefined ? { subject: subjectOf(ctx)! } : {}),
-        ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
-      }),
+    (ctx) => buildMcpServer(deps, requestCtxOf(ctx)),
     {
       legacy: "stateless",
       maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
@@ -395,7 +392,8 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
       token,
       clientId: subject ?? "anonymous",
       scopes,
-      extra: subject !== undefined ? { [SUBJECT_KEY]: subject } : {},
+      // Authenticated callers are limited per subject; an anonymous one (--insecure) per client address.
+      extra: subject !== undefined ? { [SUBJECT_KEY]: subject } : { [CLIENT_KEY]: `ip:${clientIp(req, opts.clientIpHeader)}` },
     };
     (req as IncomingMessage & { auth?: AuthInfo }).auth = authInfo;
     await nodeHandler(req as Parameters<typeof nodeHandler>[0], res);
@@ -434,6 +432,7 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
     close: async () => {
       // Handler first: `server.close()` resolves only once every connection is idle, so an open
       // SSE exchange would block it forever. Closing the handler aborts in-flight exchanges.
+      shutdown.abort();
       await mcpHandler.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

@@ -1,252 +1,50 @@
-import type { HttpClient } from "../supervisor/httpClient.js";
-import type { AuditContext } from "../supervisor/audit.js";
-import {
-  StudiesSearchParams,
-  StudyGetParams,
-  FieldValueStatsParams,
-  FieldSizeStatsParams,
-  type StudiesSearchParamsT,
-  type StudyGetParamsT,
-  type FieldValueStatsParamsT,
-  type FieldSizeStatsParamsT,
-} from "../supervisor/validation.js";
-import { CtGovError } from "../supervisor/errors.js";
-import { z } from "zod";
+import type { RpcMethods, SourceMeta } from './sources/source.js';
 
-/**
- * Reformat a zod error from `StudiesSearchParams.parse` into a hint-bearing
- * CtGovError. The most common LLM-authored mistake is nesting under a `query`
- * or `filter` object — the upstream API uses flat dotted keys. Catch that
- * specific shape and surface a one-line fix instead of a stack trace.
- */
-function rethrowSearchParamsError(err: unknown): never {
-  if (err instanceof z.ZodError) {
-    const offenders = err.issues
-      .filter(
-        (i) => i.code === "unrecognized_keys" && i.path.length === 0,
-      )
-      .flatMap((i) =>
-        (i as z.ZodIssue & { keys?: string[] }).keys ?? [],
-      )
-      .filter((k) => k === "query" || k === "filter" || k === "postFilter");
-    if (offenders.length > 0) {
-      throw new CtGovError(
-        "VALIDATION_ERROR",
-        `studies.search() uses flat dotted keys, not nested objects. ` +
-          `Replace { ${offenders.join(", ")}: { ... } } with string keys like ` +
-          `"query.cond", "query.term", "filter.overallStatus", "filter.geo".`,
-      );
+export interface RpcRequest {
+  binding: string;
+  path: string[];
+  args: unknown[];
+}
+
+export interface RpcResponse {
+  ok: boolean;
+  value?: unknown;
+  error?: { name: string; message: string; status?: number };
+}
+
+export interface DispatchRegistry {
+  methods: Readonly<Record<string, RpcMethods>>;
+  meta: SourceMeta[];
+}
+
+export async function dispatch(reg: DispatchRegistry, req: RpcRequest): Promise<RpcResponse> {
+  // Validate the RPC envelope independently of AST preflight. Dotted keys inside
+  // a single path segment must not alias an explicitly registered method.
+  if (!req || typeof req.binding !== 'string' || !Array.isArray(req.path)
+    || req.path.length === 0 || !req.path.every(p => typeof p === 'string' && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(p))
+    || !Array.isArray(req.args)) {
+    return { ok: false, error: { name: 'TypeError', message: 'Invalid SDK call' } };
+  }
+  const methods = Object.getOwnPropertyDescriptor(reg.methods, req.binding)?.value as RpcMethods | undefined;
+  if (!methods) {
+    const m = reg.meta.find(x => x.name === req.binding);
+    if (m && !m.enabled) {
+      return { ok: false, error: { name: 'SourceUnavailable', message: m.disabledReason ?? `${m.label} is unavailable` } };
     }
+    return { ok: false, error: { name: 'TypeError', message: `Cannot resolve binding '${req.binding}'` } };
   }
-  throw err;
-}
-
-export interface Study {
-  protocolSection?: Record<string, unknown>;
-  derivedSection?: Record<string, unknown>;
-  resultsSection?: Record<string, unknown>;
-  annotationSection?: Record<string, unknown>;
-  documentSection?: Record<string, unknown>;
-  hasResults?: boolean;
-}
-
-export interface StudiesPage {
-  studies: Study[];
-  nextPageToken?: string;
-  totalCount?: number;
-}
-
-export interface FieldNode {
-  name: string;
-  piece?: string;
-  type?: string;
-  rules?: string;
-  description?: string;
-  children?: FieldNode[];
-}
-
-export interface SearchArea {
-  name: string;
-  parts: Array<{ name: string; weight?: number; fields: string[] }>;
-}
-
-export interface EnumDef {
-  type: string;
-  pieces: string[];
-  values: Array<{ value: string; legacyValue?: string }>;
-}
-
-export interface SearchAllOptions {
-  /** Maximum number of pages to iterate. Default 10, hard cap 100. */
-  maxPages?: number;
-  /** Page size. Default 100. */
-  pageSize?: number;
-}
-
-export interface CtGovRuntimeOptions {
-  http: HttpClient;
-  audit: AuditContext;
-}
-
-/**
- * The `ctgov` binding exposed inside the sandbox.
- * Every method proxies through the supervisor's HttpClient (rate-limited,
- * cached, validated).
- */
-export class CtGovRuntime {
-  private readonly http: HttpClient;
-  private readonly audit: AuditContext;
-
-  constructor(opts: CtGovRuntimeOptions) {
-    this.http = opts.http;
-    this.audit = opts.audit;
-  }
-
-  get studies(): {
-    search: (p: StudiesSearchParamsT) => Promise<StudiesPage>;
-    searchAll: (p: StudiesSearchParamsT, o?: SearchAllOptions) => AsyncIterable<Study>;
-    get: (nctId: string, p?: Omit<StudyGetParamsT, "nctId">) => Promise<Study>;
-    metadata: (p?: {
-      includeIndexedOnly?: boolean;
-      includeHistoricOnly?: boolean;
-    }) => Promise<FieldNode[]>;
-    searchAreas: () => Promise<SearchArea[]>;
-    enums: () => Promise<EnumDef[]>;
-  } {
-    const { http, audit } = this;
-    return {
-      async search(params): Promise<StudiesPage> {
-        let parsed: StudiesSearchParamsT;
-        try {
-          parsed = StudiesSearchParams.parse(params);
-        } catch (err) {
-          rethrowSearchParamsError(err);
-        }
-        return http.get<StudiesPage>({
-          path: "/studies",
-          query: parsed as Record<string, unknown>,
-          audit: audit,
-        });
-      },
-      searchAll(params, opts): AsyncIterable<Study> {
-        try {
-          StudiesSearchParams.parse(params);
-        } catch (err) {
-          rethrowSearchParamsError(err);
-        }
-        const maxPages = Math.min(opts?.maxPages ?? 10, 100);
-        const pageSize = opts?.pageSize ?? 100;
-        return (async function* gen() {
-          let pageToken: string | undefined;
-          for (let i = 0; i < maxPages; i++) {
-            const query: StudiesSearchParamsT = {
-              ...params,
-              pageSize,
-              ...(pageToken !== undefined ? { pageToken } : {}),
-            };
-            const page = await http.get<StudiesPage>({
-              path: "/studies",
-              query: query as Record<string, unknown>,
-              audit: audit,
-            });
-            for (const s of page.studies ?? []) yield s;
-            if (!page.nextPageToken) return;
-            pageToken = page.nextPageToken;
-          }
-        })();
-      },
-      async get(nctId, rest): Promise<Study> {
-        const parsed = StudyGetParams.parse({ nctId, ...(rest ?? {}) });
-        const { nctId: id, ...query } = parsed;
-        return http.get<Study>({
-          path: `/studies/${encodeURIComponent(id)}`,
-          query,
-          audit: audit,
-        });
-      },
-      async metadata(p): Promise<FieldNode[]> {
-        return http.get<FieldNode[]>({
-          path: "/studies/metadata",
-          ...(p ? { query: p as Record<string, unknown> } : {}),
-          audit: audit,
-        });
-      },
-      async searchAreas(): Promise<SearchArea[]> {
-        return http.get<SearchArea[]>({ path: "/studies/search-areas", audit: audit });
-      },
-      async enums(): Promise<EnumDef[]> {
-        return http.get<EnumDef[]>({ path: "/studies/enums", audit: audit });
-      },
-    };
-  }
-
-  get stats(): {
-    size: () => Promise<unknown>;
-    fieldValues: (p: FieldValueStatsParamsT) => Promise<unknown>;
-    fieldSizes: (p: FieldSizeStatsParamsT) => Promise<unknown>;
-  } {
-    const { http, audit } = this;
-    return {
-      async size() {
-        return http.get<unknown>({ path: "/stats/size", audit: audit });
-      },
-      async fieldValues(params) {
-        const parsed = FieldValueStatsParams.parse(params);
-        return http.get<unknown>({
-          path: "/stats/field/values",
-          query: parsed as Record<string, unknown>,
-          audit: audit,
-        });
-      },
-      async fieldSizes(params) {
-        const parsed = FieldSizeStatsParams.parse(params);
-        return http.get<unknown>({
-          path: "/stats/field/sizes",
-          query: parsed as Record<string, unknown>,
-          audit: audit,
-        });
-      },
-    };
-  }
-
-  async version(): Promise<unknown> {
-    return this.http.get<unknown>({ path: "/version", audit: this.audit });
-  }
-}
-
-/**
- * Build the low-level RPC surface: a stable set of `method(args)` pairs that
- * the sandbox calls via `__host.rpc(method, args)`. Keeping it flat simplifies
- * the host↔sandbox bridge and the AST allow-list.
- */
-export function buildRpcDispatch(runtime: CtGovRuntime): RpcDispatch {
-  return async (method, args) => {
-    switch (method) {
-      case "studies.search":
-        return runtime.studies.search(args as StudiesSearchParamsT);
-      case "studies.get": {
-        const a = args as { nctId: string } & Omit<StudyGetParamsT, "nctId">;
-        const { nctId, ...rest } = a;
-        return runtime.studies.get(nctId, rest);
-      }
-      case "studies.metadata":
-        return runtime.studies.metadata(args as { includeIndexedOnly?: boolean; includeHistoricOnly?: boolean });
-      case "studies.searchAreas":
-        return runtime.studies.searchAreas();
-      case "studies.enums":
-        return runtime.studies.enums();
-      case "stats.size":
-        return runtime.stats.size();
-      case "stats.fieldValues":
-        return runtime.stats.fieldValues(args as FieldValueStatsParamsT);
-      case "stats.fieldSizes":
-        return runtime.stats.fieldSizes(args as FieldSizeStatsParamsT);
-      case "version":
-        return runtime.version();
-      default:
-        throw new CtGovError("POLICY_VIOLATION", `Unknown SDK method: ${method}`);
+  try {
+    // Resolve only an own data property in the source's explicit registry.
+    // Never walk the client object: TypeScript `private` is not a runtime boundary.
+    const method = Object.getOwnPropertyDescriptor(methods, req.path.join('.'))?.value;
+    if (typeof method !== 'function') {
+      return { ok: false, error: { name: 'TypeError', message: `${req.binding}.${req.path.join('.')} is not a function` } };
     }
-  };
+    const value = await method(...req.args);
+    return { ok: true, value };
+  } catch (err) {
+    // A method can reject with any value, or with none: never read a property of null here.
+    const e = (err ?? {}) as { name?: string; message?: string; status?: number };
+    return { ok: false, error: { name: e.name ?? 'Error', message: e.message ?? String(err), status: e.status } };
+  }
 }
-
-export type RpcDispatch = (method: string, args: unknown) => Promise<unknown>;

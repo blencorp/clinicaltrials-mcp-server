@@ -1,13 +1,7 @@
 import { McpServer, fromJsonSchema, type JsonSchemaType } from "@modelcontextprotocol/server";
-import type { Dispatcher } from "undici";
-import { HttpClient } from "../supervisor/httpClient.js";
-import type { RateLimiter } from "../supervisor/rateLimiter.js";
-import type { ResponseCache } from "../supervisor/cache.js";
-import type { SandboxExecutor } from "../sandbox/types.js";
-import { CtGovError } from "../supervisor/errors.js";
-import type { SubjectQuota } from "../supervisor/subjectQuota.js";
+import type { RequestCtx } from "../tools/execute.js";
 import { logger } from "../util/logger.js";
-import { buildCatalog } from "./toolCatalog.js";
+import { buildCatalog, type CatalogDeps } from "./toolCatalog.js";
 
 /**
  * The MCP revision this server speaks.
@@ -21,35 +15,11 @@ export const MCP_PROTOCOL_VERSION = "2026-07-28";
 /** This build's release (the release workflow stamps it). */
 export const SERVER_VERSION = "0.1.0-alpha.0"; // x-release-version
 
-export interface BuildMcpServerOptions {
-  executor?: SandboxExecutor;
-  resolveExecutor?: () => SandboxExecutor;
-  /**
-   * Subject identifier (OAuth `sub`) to stamp on audit events. `undefined`
-   * for stdio/unauthenticated local use.
-   */
-  subject?: string;
-  /** Per-subject quota enforcer (HTTP transport). */
-  quota?: SubjectQuota;
-  /**
-   * `docs-only` serves search_api + describe_schema and nothing else: `execute` is not registered
-   * (a call is an unknown tool) and no sandbox is ever resolved. Used for anonymous public hosting.
-   */
-  tools?: "all" | "docs-only";
-  /** undici dispatcher for upstream requests (tests inject a MockAgent). Defaults to the global one. */
-  dispatcher?: Dispatcher;
-  /**
-   * Response cache and process-wide upstream gate. The HTTP transport builds one server per
-   * request, so it passes shared instances here; without them each server would start with an
-   * empty cache and a full token bucket.
-   */
-  cache?: ResponseCache;
-  rateLimiter?: RateLimiter;
-}
-
 /** Server-level guidance clients may show the model before it picks a tool. */
-export const SERVER_INSTRUCTIONS =
-  "ClinicalTrials.gov through code mode. Workflow: search_api (find the SDK method and study field names) -> describe_schema (exact field paths) -> execute (run JavaScript against the `ctgov` global). Read-only; ask for only the `fields` you need.";
+export const SERVER_INSTRUCTIONS = [
+  "ClinicalTrials.gov through code mode. Workflow: search_api (find the SDK method and field names) -> describe_schema (exact signature and field paths) -> execute (run plain JavaScript against the `ctgov` global). Read-only.",
+  "The SDK takes flat dotted keys ('query.cond', 'filter.overallStatus'), not nested objects. Always pass `fields` to studies.search and return only the values you need: an execute result over 256 KiB fails. To read more than one page, loop on nextPageToken with pageToken (there is no searchAll helper).",
+].join("\n");
 
 // The catalog derives from process configuration (which tools are offered), not from the caller,
 // so every client sees byte-identical results and a shared cache is safe.
@@ -79,13 +49,7 @@ function cachedSchema(key: string, jsonSchema: unknown): ReturnType<typeof fromJ
   return converted;
 }
 
-function errorPayload(err: unknown): Record<string, unknown> {
-  if (err instanceof CtGovError) return err.toJSON();
-  const e = err as Error;
-  return { name: e?.name ?? "Error", message: e?.message ?? String(err) };
-}
-
-export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
+export function buildMcpServer(deps: CatalogDeps, requestCtx?: RequestCtx): McpServer {
   const server = new McpServer(
     { name: "clinicaltrial-mcp-server", version: SERVER_VERSION },
     {
@@ -95,22 +59,8 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
       cacheHints: { "tools/list": LIST_CACHE_HINT, "server/discover": LIST_CACHE_HINT },
     },
   );
-  const subject = opts.subject;
-  const resolveExecutor = (): SandboxExecutor => {
-    if (opts.resolveExecutor) return opts.resolveExecutor();
-    if (opts.executor) return opts.executor;
-    throw new CtGovError("INTERNAL_ERROR", "sandbox executor not configured");
-  };
 
-  // The HTTP client carries subject-aware rate limiting when a quota is provided.
-  const httpClientOpts: ConstructorParameters<typeof HttpClient>[0] = {};
-  if (opts.quota) httpClientOpts.acquireFn = () => opts.quota!.acquireUpstream(subject);
-  if (opts.dispatcher) httpClientOpts.dispatcher = opts.dispatcher;
-  if (opts.cache) httpClientOpts.cache = opts.cache;
-  if (opts.rateLimiter) httpClientOpts.rateLimiter = opts.rateLimiter;
-  const http = new HttpClient(httpClientOpts);
-
-  for (const tool of buildCatalog({ resolveExecutor, http, subject, quota: opts.quota, tools: opts.tools ?? "all" })) {
+  for (const tool of buildCatalog(deps, requestCtx)) {
     server.registerTool(
       tool.name,
       {
@@ -134,11 +84,11 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
             ...(tool.isFailure?.(result) ? { isError: true } : {}),
           };
         } catch (err) {
-          const payload = errorPayload(err);
-          logger.warn("tool.error", { tool: tool.name, subject, ...payload });
+          const e = err as Error;
+          logger.warn("tool.error", { tool: tool.name, name: e?.name, error: e?.message });
           return {
             isError: true,
-            content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+            content: [{ type: "text" as const, text: `${e?.name ?? "Error"}: ${e?.message ?? String(err)}` }],
           };
         }
       },

@@ -1,66 +1,22 @@
-import { z } from "zod";
-import { searchCorpus, type EndpointDoc, type FieldDoc } from "../search/corpus.js";
+import { z } from 'zod';
+import type { Corpus } from '../search/corpus.js';
 
 export const SearchApiInput = z.object({
-  query: z.string().min(1, "query is required").describe("What you are looking for, in plain words, e.g. 'recruiting studies by condition'"),
-  k: z.number().int().min(1).max(25).optional().describe("Number of matches to return (default 8)"),
+  query: z.string().min(1).describe('Free-text query over the ClinicalTrials.gov SDK methods and field documentation (ctgov.*) (for example: recruiting studies by condition).'),
+  k: z.number().int().min(1).max(50).default(10).describe('Max number of results to return'),
 });
+export type SearchApiInputT = z.infer<typeof SearchApiInput>;
 
-/**
- * Canonical example prepended to every search_api snippet so the model writes
- * `ctgov.studies.search(...)` with the correct flat dotted-key shape that the
- * upstream API and our zod schema both require. The most common failure mode
- * without this is the model guessing nested `{query:{cond}, filter:{...}}`,
- * which the SDK rejects with `unrecognized_keys`.
- */
-const SDK_CALL_PRIMER = `// Quick reference — the ctgov SDK uses *flat dotted keys* (mirrors the v2 REST API).
-// Pass them as string keys; do NOT nest under a "query" or "filter" object.
-//
-//   const page = await ctgov.studies.search({
-//     "query.cond": "lung cancer",          // condition
-//     "query.term": "phase 3",              // free text
-//     "filter.overallStatus": ["RECRUITING"],
-//     "filter.geo": "distance(42.36,-71.06,50mi)",  // lat,lon,radius
-//     pageSize: 20,
-//     fields: ["NCTId","BriefTitle","OverallStatus","Phase","LocationFacility"],
-//   });
-//   return page.studies;
-//
-// Use ctgov.studies.searchAll(params) when you need all pages.
-`;
-
-export interface SearchApiResult {
-  query: string;
-  hits: Array<
-    | { kind: "endpoint"; score: number; endpoint: EndpointDoc }
-    | { kind: "field"; score: number; field: FieldDoc }
-  >;
-  snippet: string;
+export interface SearchHit {
+  id: string; kind: 'endpoint' | 'field'; binding: string;
+  description: string; signature?: string; example?: string; score: number;
 }
 
-export function runSearchApi(input: z.infer<typeof SearchApiInput>): SearchApiResult {
-  const k = input.k ?? 8;
-  const results = searchCorpus(input.query, k);
-
-  const hits = results.map((r) => {
-    const p = r.payload as EndpointDoc | FieldDoc;
-    if (p.kind === "endpoint") {
-      return { kind: "endpoint" as const, score: r.score, endpoint: p };
-    }
-    return { kind: "field" as const, score: r.score, field: p };
+export function searchApi(input: SearchApiInputT, corpus: Corpus): { hits: SearchHit[]; note: string } {
+  const scored = corpus.index.search(input.query, input.k);
+  const hits: SearchHit[] = scored.map(s => {
+    const e = corpus.entries.get(s.id)!;
+    return { id: e.id, kind: e.kind, binding: e.binding, description: e.description, signature: e.signature, example: e.example, score: Math.round(s.score * 1000) / 1000 };
   });
-
-  const snippetParts: string[] = [];
-  snippetParts.push("// Top matches for: " + JSON.stringify(input.query));
-  snippetParts.push(SDK_CALL_PRIMER);
-  for (const hit of hits) {
-    if (hit.kind === "endpoint") {
-      snippetParts.push(hit.endpoint.tsSlice);
-    } else {
-      snippetParts.push(
-        `// field: ${hit.field.path} (${hit.field.type}) — ${hit.field.doc}`,
-      );
-    }
-  }
-  return { query: input.query, hits, snippet: snippetParts.join("\n\n") };
+  return { hits, note: 'Use describe_schema with `path` for exact lookup or `prefix` to explore a namespace. Use execute to run JavaScript (no type annotations) against the ctgov global.' };
 }

@@ -1,59 +1,29 @@
-/**
- * The JS source for the `ctgov` object available inside the sandbox.
- * Bundled as a string so both isolated-vm and the Deno subprocess can load it.
- *
- * Every call dispatches through `__host.rpc(method, args)`, which the host
- * wires to the supervisor-backed `RpcDispatch` function.
- */
-export const CTGOV_SDK_SHIM = /* js */ `
-"use strict";
-(function (globalCtx, hostCtx) {
-  function rpc(method, args) { return hostCtx.rpc(method, args); }
+import { getSources, type Source, type SourceConfig } from './sources/index.js';
+import type { RpcMethods, SourceMeta } from './sources/source.js';
 
-  function asyncIterFromPaged(params, opts) {
-    var maxPages = Math.min((opts && opts.maxPages) || 10, 100);
-    var pageSize = (opts && opts.pageSize) || 100;
-    var token;
-    var done = false;
-    return {
-      [Symbol.asyncIterator]() {
-        var buffer = [];
-        var pageIndex = 0;
-        return {
-          async next() {
-            while (buffer.length === 0) {
-              if (done || pageIndex >= maxPages) return { value: undefined, done: true };
-              var q = Object.assign({}, params, { pageSize });
-              if (token) q.pageToken = token;
-              var page = await rpc("studies.search", q);
-              pageIndex++;
-              (page && page.studies ? page.studies : []).forEach(function (s) { buffer.push(s); });
-              if (!page || !page.nextPageToken) { done = true; } else { token = page.nextPageToken; }
-            }
-            return { value: buffer.shift(), done: false };
-          },
-        };
-      },
-    };
+export interface Sdk {
+  clients: Record<string, object>;   // enabled sources only
+  methods: Readonly<Record<string, RpcMethods>>; // the only sandbox-callable surface
+  meta: SourceMeta[];                // all registered sources
+  registeredNames: string[];         // all names (drives global injection)
+}
+
+export function buildSdk(cfg: SourceConfig): Sdk {
+  return sdkFromSources(getSources(cfg));
+}
+
+/** One set of sources serves both the corpus and dispatch, so caches are not duplicated. */
+export function sdkFromSources(sources: Source[]): Sdk {
+  const clients: Record<string, object> = {};
+  const methods: Record<string, RpcMethods> = Object.create(null);
+  for (const s of sources) if (s.enabled) {
+    clients[s.name] = s.client;
+    methods[s.name] = s.methods;
   }
-
-  var ctgov = {
-    studies: {
-      search: function (p) { return rpc("studies.search", p || {}); },
-      searchAll: function (p, o) { return asyncIterFromPaged(p || {}, o || {}); },
-      get: function (nctId, p) { return rpc("studies.get", Object.assign({ nctId }, p || {})); },
-      metadata: function (p) { return rpc("studies.metadata", p || {}); },
-      searchAreas: function () { return rpc("studies.searchAreas", {}); },
-      enums: function () { return rpc("studies.enums", {}); },
-    },
-    stats: {
-      size: function () { return rpc("stats.size", {}); },
-      fieldValues: function (p) { return rpc("stats.fieldValues", p); },
-      fieldSizes: function (p) { return rpc("stats.fieldSizes", p); },
-    },
-    version: function () { return rpc("version", {}); },
+  return {
+    clients,
+    methods: Object.freeze(methods),
+    meta: sources.map(({ name, label, enabled, disabledReason }) => ({ name, label, enabled, disabledReason })),
+    registeredNames: sources.map(s => s.name),
   };
-
-  globalCtx.ctgov = ctgov;
-})(globalThis, __host);
-`;
+}

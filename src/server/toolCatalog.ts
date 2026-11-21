@@ -1,10 +1,11 @@
-import type { ToolAnnotations } from "@modelcontextprotocol/server";
-import { DescribeSchemaInput, runDescribeSchema } from "../tools/describeSchema.js";
-import { ExecuteInput, runExecute, type ExecuteDeps } from "../tools/execute.js";
-import { SearchApiInput, runSearchApi } from "../tools/searchApi.js";
-import type { SandboxExecutor } from "../sandbox/types.js";
-import type { SubjectQuota } from "../supervisor/subjectQuota.js";
-import { zodToJsonSchema } from "./zodToJsonSchema.js";
+import type { Sdk } from '../sdk/bindings.js';
+import type { SandboxRunner } from '../sandbox/types.js';
+import type { Corpus } from '../search/corpus.js';
+import type { ToolAnnotations } from '@modelcontextprotocol/server';
+import { SearchApiInput, searchApi } from '../tools/searchApi.js';
+import { DescribeSchemaInput, describeSchema } from '../tools/describeSchema.js';
+import { ExecuteInput, execute, type ExecuteDeps, type RequestCtx } from '../tools/execute.js';
+import { zodToJsonSchema } from './zodToJsonSchema.js';
 
 export interface ToolDescriptor {
   name: string;
@@ -15,117 +16,105 @@ export interface ToolDescriptor {
   /** JSON Schema of the structured result (`structuredContent`). */
   outputSchema: Record<string, unknown>;
   /** `signal` aborts when the client cancels the request or disconnects. */
-  handler: (args: unknown, ctx: { signal?: AbortSignal | undefined }) => Promise<unknown>;
+  handler: (args: unknown, ctx?: { signal?: AbortSignal }) => Promise<unknown>;
   /** True when a returned result is a tool execution failure (MCP `isError`). */
   isFailure?: (result: unknown) => boolean;
 }
 
+const ENTRY_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' }, kind: { type: 'string', enum: ['endpoint', 'field'] }, binding: { type: 'string' },
+    description: { type: 'string' }, signature: { type: 'string' }, example: { type: 'string' }, score: { type: 'number' },
+  },
+  required: ['id', 'kind', 'binding', 'description'],
+} as const;
+
 export const OUTPUT_SCHEMAS = {
   search_api: {
-    type: "object",
-    properties: {
-      query: { type: "string" },
-      snippet: { type: "string", description: "TypeScript reference and the matching endpoint/field notes" },
-      hits: { type: "integer", description: "How many endpoint/field matches the snippet contains" },
-    },
-    required: ["query", "snippet", "hits"],
+    type: 'object',
+    properties: { hits: { type: 'array', items: ENTRY_SCHEMA }, note: { type: 'string' } },
+    required: ['hits', 'note'],
   },
   describe_schema: {
-    type: "object",
-    properties: {
-      matches: { type: "array", items: { type: "object" } },
-      total: { type: "integer" },
-    },
-    required: ["matches", "total"],
+    type: 'object',
+    properties: { found: { type: 'boolean' }, entries: { type: 'array', items: ENTRY_SCHEMA }, message: { type: 'string' } },
+    required: ['found'],
   },
   execute: {
-    type: "object",
+    type: 'object',
     properties: {
-      ok: { type: "boolean", description: "false when the code threw, timed out, or broke a limit; see error" },
-      result: { description: "The JSON value the code returned" },
-      logs: { type: "array", items: { type: "object" } },
+      ok: { type: 'boolean', description: 'false when the code threw, timed out, or broke a limit; see error' },
+      value: { description: 'The JSON value the code returned' },
+      logs: { type: 'array', items: { type: 'string' } },
       error: {
-        type: "object",
-        properties: { name: { type: "string" }, message: { type: "string" }, stack: { type: "string" }, code: { type: "string" } },
-        required: ["name", "message"],
+        type: 'object',
+        properties: { name: { type: 'string' }, message: { type: 'string' }, status: { type: 'number' } },
+        required: ['name', 'message'],
       },
-      calls: { type: "array", items: { type: "object" } },
-      durationMs: { type: "number" },
-      executor: { type: "string", enum: ["isolate", "deno"] },
+      durationMs: { type: 'number' },
     },
-    required: ["ok", "logs", "calls", "durationMs", "executor"],
+    required: ['ok', 'logs', 'durationMs'],
   },
 } as const;
 
-export interface CatalogDeps {
-  /** Resolves the sandbox on the first `execute` call (never at startup). */
-  resolveExecutor: () => SandboxExecutor;
-  http: ExecuteDeps["http"];
-  /** Subject (OAuth `sub`) stamped on audit events; undefined for stdio and anonymous use. */
-  subject?: string | undefined;
-  quota?: SubjectQuota | undefined;
+export interface CatalogDeps extends Omit<ExecuteDeps, 'sandbox'> {
+  corpus: Corpus;
+  /** Absent for docs-only serving, which never resolves a sandbox. */
+  sandbox?: SandboxRunner;
   /** `docs-only` offers search_api + describe_schema and nothing else. */
-  tools: "all" | "docs-only";
+  tools?: 'all' | 'docs-only';
 }
 
-export function buildCatalog(deps: CatalogDeps): ToolDescriptor[] {
+export function buildCatalog(deps: CatalogDeps, requestCtx?: RequestCtx): ToolDescriptor[] {
   const all: ToolDescriptor[] = [
     {
-      name: "search_api",
-      title: "Search ClinicalTrials.gov API surface",
+      name: 'search_api',
+      title: 'Search ClinicalTrials.gov API surface',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description:
-        "Search the ClinicalTrials.gov SDK surface (see https://clinicaltrials.gov/data-api/api). Returns a TypeScript snippet describing the most relevant endpoints and study fields for your query. Use this before writing code for `execute`.",
+        'BM25 search over the ClinicalTrials.gov SDK methods (ctgov.studies.*, ctgov.stats.*, ctgov.version) and the curated study-field dictionary. Returns method signatures and runnable JavaScript examples for use in `execute`. Use it before writing code: the SDK takes flat dotted keys ("query.cond", "filter.overallStatus"), not nested objects.',
       inputSchema: zodToJsonSchema(SearchApiInput),
       outputSchema: OUTPUT_SCHEMAS.search_api,
-      handler: async (args) => {
-        const out = runSearchApi(SearchApiInput.parse(args));
-        return { query: out.query, snippet: out.snippet, hits: out.hits.length };
-      },
+      handler: async (args) => searchApi(SearchApiInput.parse(args), deps.corpus),
     },
     {
-      name: "describe_schema",
-      title: "Describe ClinicalTrials.gov study fields",
+      name: 'describe_schema',
+      title: 'Describe ClinicalTrials.gov SDK and study fields',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description:
-        "Return doc entries for study-data fields by exact `path` or by `prefix` (exactly one of them). Useful for discovering nested field names before projection. Field reference: https://clinicaltrials.gov/data-api/about-api/study-data-structure.",
+        'Look up an SDK method, query-syntax note or study field by exact dotted id (`path`, e.g. "ctgov.studies.search", "ctgov.syntax.paging", "ctgov.fields.protocolSection.statusModule.overallStatus") or by namespace `prefix` (e.g. "ctgov.studies", "ctgov.fields.protocolSection.designModule"); exactly one of them. Field reference: https://clinicaltrials.gov/data-api/about-api/study-data-structure.',
       inputSchema: zodToJsonSchema(DescribeSchemaInput, {
         // Exactly one of path / prefix (the handler's refine rule, in JSON Schema form).
-        oneOf: [{ required: ["path"], not: { required: ["prefix"] } }, { required: ["prefix"], not: { required: ["path"] } }],
+        oneOf: [{ required: ['path'], not: { required: ['prefix'] } }, { required: ['prefix'], not: { required: ['path'] } }],
       }),
       outputSchema: OUTPUT_SCHEMAS.describe_schema,
-      handler: async (args) => runDescribeSchema(DescribeSchemaInput.parse(args)),
+      handler: async (args) => describeSchema(DescribeSchemaInput.parse(args), deps.corpus.entries),
     },
     {
-      name: "execute",
-      title: "Execute sandboxed ClinicalTrials.gov query",
+      name: 'execute',
+      title: 'Execute sandboxed ClinicalTrials.gov query',
+      // The sandbox SDK only reads upstream data. Idempotence describes external
+      // effects, not identical results; annotations do not enforce permissions.
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       description:
-        "Run a short async body against the `ctgov` SDK in a secure sandbox to query the public ClinicalTrials.gov v2 API (https://clinicaltrials.gov/data-api/api). The body is wrapped as `async (ctgov) => { <your code> }` and must `return` a JSON-serializable value. Read-only: the SDK only exposes GET endpoints. No network/fs; only `ctgov.*` methods, `console.*`, and standard globals are available.",
+        'Run JavaScript inside a sandbox (no net, fs, env, or subprocess) against the `ctgov` SDK for the public ClinicalTrials.gov v2 API (https://clinicaltrials.gov/data-api/api). Plain JS only: TypeScript type annotations are rejected. Top-level await is allowed; `return` the value you want as the result (at most 256 KiB, so pass `fields` to studies.search and return only what you need). To read several pages, loop on `nextPageToken` with `pageToken`; there is no searchAll helper. Read-only: GET endpoints only.',
       inputSchema: zodToJsonSchema(ExecuteInput),
       outputSchema: OUTPUT_SCHEMAS.execute,
       handler: async (args, ctx) => {
-        const input = ExecuteInput.parse(args);
-        if (ctx.signal?.aborted) throw new Error("The request was cancelled.");
-        if (deps.quota && deps.subject) deps.quota.tryConsumeExecute(deps.subject);
-        const execDeps: ExecuteDeps = { executor: deps.resolveExecutor(), http: deps.http };
-        if (deps.subject !== undefined) execDeps.subject = deps.subject;
-        return runExecute(input, execDeps);
+        if (!deps.sandbox) throw new Error('execute is not available: this server has no sandbox');
+        return execute(ExecuteInput.parse(args), { ...deps, sandbox: deps.sandbox }, { ...requestCtx, ...(ctx?.signal ? { signal: ctx.signal } : {}) });
       },
-      isFailure: (result) => (result as { ok?: unknown } | null)?.ok === false,
+      isFailure: (result) => (result as { ok?: unknown })?.ok === false,
     },
   ];
-  return deps.tools === "docs-only" ? all.filter((t) => t.name !== "execute") : all;
+  return deps.tools === 'docs-only' ? all.filter((t) => t.name !== 'execute') : all;
 }
 
-/**
- * The static tool listing (names, descriptions, schemas) for consumers that never call a handler,
- * such as the MCPB manifest. The handlers close over deps this listing does not have: do not invoke them.
- */
+/** The static tool listing (names, descriptions, schemas) for consumers that never call a handler. */
 export const TOOL_CATALOG: readonly ToolDescriptor[] = buildCatalog({
-  resolveExecutor: () => {
-    throw new Error("TOOL_CATALOG is a listing only");
-  },
-  http: undefined as unknown as ExecuteDeps["http"],
-  tools: "all",
+  corpus: undefined as unknown as Corpus,
+  sdk: undefined as unknown as Sdk,
+  callBudgets: {},
+  tools: 'all',
 });

@@ -68,7 +68,7 @@ describe.skipIf(!built)("built CLI over stdio (dist/bin.js)", () => {
     expect(run.frames[1]!.result.tools.map((t: { name: string }) => t.name)).toEqual(["search_api", "describe_schema", "execute"]);
     const call = run.frames[2]!.result;
     expect(call.isError).toBeFalsy();
-    expect(JSON.parse(call.content[0].text).hits).toBe(2);
+    expect(JSON.parse(call.content[0].text).hits).toHaveLength(2);
     expect(run.signal).toBeNull();
     expect(run.code).toBe(0);
   });

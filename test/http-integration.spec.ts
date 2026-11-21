@@ -7,7 +7,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SignJWT, exportJWK, generateKeyPair, type CryptoKey, type JWK } from "jose";
 import { startHttpServer, MAX_REQUEST_BODY_BYTES, type HttpHandle, type HttpServerOptions } from "../src/server/http.js";
 import { MCP_PROTOCOL_VERSION } from "../src/server/mcpServer.js";
+import { DenoRunner } from "../src/sandbox/deno.js";
+import { IsolateRunner } from "../src/sandbox/isolate.js";
 import { constantUpstream, type FakeUpstream } from "./characterization/helpers.js";
+import { loopback, until } from "./helpers.js";
 
 const PROTOCOL_VERSION = "2026-07-28";
 
@@ -130,7 +133,8 @@ describe("anonymous endpoint (--insecure) in both protocol eras", () => {
     expect(r.status).toBe(200);
     const res = r.body.result;
     expect(res.isError).toBeFalsy();
-    expect(res.structuredContent.hits).toBe(2);
+    expect(res.structuredContent.hits).toHaveLength(2);
+    expect(res.structuredContent.note).toMatch(/describe_schema/);
     expect(res.content[0].text).toBe(JSON.stringify(res.structuredContent));
   });
 
@@ -460,6 +464,20 @@ describe("bearer-token enforcement (OIDC, real ES256 tokens from a local issuer)
     expect(one.headers.get("www-authenticate")).toContain('scope="ctgov:extra"');
   });
 
+  it("runs execute for an authenticated caller, in the Deno process sandbox only (C)", async ({ skip }) => {
+    if (!(await new DenoRunner().available())) return skip();
+    const r = await rpc(base, "tools/call", { name: "execute", arguments: { code: "return 1 + 41;" } }, { headers: { authorization: `Bearer ${await sign(good({ scope: "ctgov:read ctgov:extra" }))}` } });
+    expect(r.status).toBe(200);
+    expect(r.body.result.structuredContent).toMatchObject({ ok: true, value: 42 });
+  });
+
+  it("refuses to serve authenticated HTTP with the in-process isolate sandbox", async () => {
+    await expect(startHttpServer({
+      port: 0, host: "127.0.0.1", sandboxMode: "isolate",
+      auth: { provider: "generic-oidc", issuer: ISSUER, audience: AUDIENCE, jwksUrl: "http://127.0.0.1:1/jwks.json", scopes: ["ctgov:read"] },
+    })).rejects.toThrow(/isolate/);
+  });
+
   it("keeps verifier details out of the response", async () => {
     const r = await post(`${base}/mcp`, "{}", { authorization: `Bearer ${await sign(good(), { key: otherKey })}` });
     expect(r.raw).toBe("invalid bearer token");
@@ -515,12 +533,52 @@ describe("shared state across stateless requests", () => {
       const run = () =>
         rpc(base, "tools/call", { name: "execute", arguments: { code: "return await ctgov.version();", timeoutMs: 5000 } });
       const first = await run();
-      if (first.body.result.structuredContent?.executor === undefined) return;
+      if (first.body.result.structuredContent?.ok !== true) return; // no sandbox runner on this machine
+      expect(first.body.result.structuredContent.value).toEqual({ apiVersion: "2.0.0" });
       await run();
       expect(upstream.requests.map((r) => r.path)).toEqual(["/version"]);
     } finally {
       await h.close();
       await upstream.close();
+    }
+  });
+});
+
+describe("execution control over HTTP (C8)", () => {
+  const anyRunner = async () => (await new IsolateRunner().available()) || (await new DenoRunner().available());
+  const slow = (base: string) => rpc(base, "tools/call", { name: "execute", arguments: { code: "return await ctgov.version();", timeoutMs: 30_000 } });
+
+  it("counts anonymous callers per client address: a second concurrent execution from one address is Busy, another address is not", async ({ skip }) => {
+    if (!(await anyRunner())) return skip();
+    const lb = await loopback(() => { /* the upstream never answers */ });
+    const { h, base } = await serve({ insecure: true, clientIpHeader: "x-real-ip", supervisor: { baseUrl: lb.baseUrl, maxExecutionsPerSubject: 1 } });
+    try {
+      const first = rpc(base, "tools/call", { name: "execute", arguments: { code: "return await ctgov.version();", timeoutMs: 30_000 } }, { headers: { "x-real-ip": "203.0.113.5" } });
+      await until(() => lb.requests.length === 1);
+      const second = await rpc(base, "tools/call", { name: "execute", arguments: { code: "return 1;" } }, { headers: { "x-real-ip": "203.0.113.5" } });
+      expect(second.body.result.isError).toBe(true);
+      expect(second.body.result.structuredContent).toMatchObject({ ok: false, error: { name: "Busy" } });
+      const other = await rpc(base, "tools/call", { name: "execute", arguments: { code: "return 1;" } }, { headers: { "x-real-ip": "198.51.100.9" } });
+      expect(other.body.result.structuredContent).toMatchObject({ ok: true, value: 1 });
+      void first.catch(() => {});
+    } finally {
+      await h.close();
+      await lb.close();
+    }
+  });
+
+  it("closing the server aborts a running execution and its upstream request", async ({ skip }) => {
+    if (!(await anyRunner())) return skip();
+    const lb = await loopback(() => { /* the upstream never answers */ });
+    const { h, base } = await serve({ insecure: true, supervisor: { baseUrl: lb.baseUrl } });
+    try {
+      const pending = slow(base).catch(() => undefined);
+      await until(() => lb.requests.length === 1);
+      await h.close();
+      await until(() => lb.aborted() === 1);
+      await pending;
+    } finally {
+      await lb.close();
     }
   });
 });

@@ -1,6 +1,6 @@
 // Characterization: pins the tools/list contract (names, titles, descriptions, inputSchema,
 // outputSchema, annotations) for the `all` and `docs-only` modes. Pinned on v1 originally; updated
-// for the SDK v2 port against the expected-diff list in docs/migration-0.1.md (D7). The JSON
+// for the SDK v2 port against the expected-diff list in docs/migration-0.1.md (D7), and again for package C (C1/C4/C9: tool descriptions, the execute output schema, uspto's result schemas, execute limits as defaults). The JSON
 // fixtures under __fixtures__ are the reference copies.
 import { describe, expect, it } from "vitest";
 import { connect } from "./helpers.js";
@@ -63,9 +63,12 @@ describe("tools/list", () => {
     try {
       const { tools } = await c.client.listTools();
       const byName = Object.fromEntries(tools.map((t) => [t.name, t.inputSchema as any]));
-      expect(byName.search_api.properties.k).toMatchObject({ type: "integer", minimum: 1, maximum: 25 });
-      expect(byName.execute.properties.timeoutMs).toMatchObject({ type: "integer", minimum: 100, maximum: 60000 });
-      expect(byName.execute.properties.memoryMb).toMatchObject({ type: "integer", minimum: 16, maximum: 256 });
+      expect(byName.search_api.properties.k).toMatchObject({ type: "integer", minimum: 1, maximum: 50 });
+      // C4: the limits are per-call zod defaults (advertised as `default`, but still optional).
+      expect(byName.search_api.properties.k.default).toBe(10);
+      expect(byName.execute.properties.timeoutMs).toMatchObject({ type: "integer", minimum: 100, maximum: 60000, default: 15000 });
+      expect(byName.execute.properties.memoryMb).toMatchObject({ type: "integer", minimum: 16, maximum: 256, default: 64 });
+      expect(byName.execute.properties.code).toMatchObject({ type: "string", minLength: 1, maxLength: 262144 });
       expect(byName.execute.required).toEqual(["code"]);
       for (const schema of Object.values(byName)) expect(schema.additionalProperties).toBe(false);
       expect(byName.describe_schema.oneOf).toHaveLength(2);

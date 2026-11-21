@@ -4,11 +4,13 @@ import { startHttpServer, type HttpServerOptions } from "./server/http.js";
 import { DEFAULT_SCOPE, type AuthProvider } from "./server/authz.js";
 import { SERVER_VERSION } from "./server/mcpServer.js";
 import { logger } from "./util/logger.js";
-import type { SandboxMode } from "./sandbox/index.js";
+import type { SandboxKind } from "./sandbox/types.js";
+import { EXECUTION_DEFAULTS, UPSTREAM_DEFAULTS, SUBJECT_RATE_PER_HOUR_DEFAULT, type SupervisorConfig } from "./supervisor/index.js";
+import { DEFAULT_CALL_BUDGET } from "./tools/execute.js";
 
 interface ParsedArgs {
   transport: "stdio" | "http";
-  sandbox: SandboxMode;
+  sandbox: SandboxKind;
   insecure: boolean;
   publicDocs: boolean;
   port: number;
@@ -29,10 +31,25 @@ function list(value: string | undefined, lower = false): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Limits and upstream settings from the environment. Each must be a positive number (counts at
+ * least 1); an invalid value falls back to the default instead of silently disabling a limit.
+ */
+function supervisorConfig(env: NodeJS.ProcessEnv): Partial<SupervisorConfig> {
+  return {
+    ...(env.CTGOV_BASE_URL?.trim() ? { baseUrl: env.CTGOV_BASE_URL.trim() } : {}),
+    upstreamRatePerSec: positive(env.CTGOV_RATE_PER_SEC, UPSTREAM_DEFAULTS.ratePerSec),
+    maxConcurrentExecutions: Math.floor(positive(env.CTGOV_MAX_CONCURRENT_EXECUTIONS, EXECUTION_DEFAULTS.maxConcurrent, 1)),
+    maxExecutionsPerSubject: Math.floor(positive(env.CTGOV_MAX_EXECUTIONS_PER_SUBJECT, EXECUTION_DEFAULTS.perSubject, 1)),
+    maxCallsPerExecute: Math.floor(positive(env.CTGOV_MAX_CALLS_PER_EXECUTE, DEFAULT_CALL_BUDGET, 1)),
+    subjectRatePerHour: Math.floor(positive(env.CTGOV_SUBJECT_RATE_PER_HOUR, SUBJECT_RATE_PER_HOUR_DEFAULT, 1)),
+  };
+}
+
 function parseArgs(argv: string[], env: NodeJS.ProcessEnv): ParsedArgs {
   const args: ParsedArgs = {
     transport: "stdio",
-    sandbox: ((env.CTGOV_SANDBOX as SandboxMode | undefined) ?? "auto"),
+    sandbox: ((env.CTGOV_SANDBOX as SandboxKind | undefined) ?? "auto"),
     insecure: false,
     publicDocs: false,
     port: Number(env.PORT ?? 8080),
@@ -49,7 +66,7 @@ function parseArgs(argv: string[], env: NodeJS.ProcessEnv): ParsedArgs {
     else if (a === "--host") {
       args.host = String(argv[++i]);
       hostExplicit = true;
-    } else if (a === "--sandbox") args.sandbox = argv[++i] as SandboxMode;
+    } else if (a === "--sandbox") args.sandbox = argv[++i] as SandboxKind;
     else if (a === "--help" || a === "-h") {
       printHelp();
       process.exit(0);
@@ -92,6 +109,14 @@ function printHelp(): void {
       "  --public-docs   anonymous, docs-only: search_api + describe_schema, no execute",
       "  --insecure      local development only: no auth, binds 127.0.0.1 (only --host overrides)",
       "",
+      "Limits (environment):",
+      "  CTGOV_SANDBOX                       auto | isolate | deno (same as --sandbox)",
+      "  CTGOV_RATE_PER_SEC                  upstream requests per second, process-wide (default 10)",
+      "  CTGOV_MAX_CONCURRENT_EXECUTIONS     simultaneous executions (default 8)",
+      "  CTGOV_MAX_EXECUTIONS_PER_SUBJECT    simultaneous executions per caller (default 2)",
+      "  CTGOV_MAX_CALLS_PER_EXECUTE         upstream calls one execute may make (default 100)",
+      "  CTGOV_SUBJECT_RATE_PER_HOUR         upstream calls per authenticated subject per hour (default 3000)",
+      "",
       "HTTP environment:",
       "  CTGOV_PUBLIC_ORIGIN    https://mcp.example.com (or CTGOV_ALLOWED_HOSTS) is required when",
       "                         binding beyond loopback: trusted Host values, DNS-rebinding defence",
@@ -117,6 +142,7 @@ function httpOptions(args: ParsedArgs, env: NodeJS.ProcessEnv): HttpServerOption
     port: args.port,
     host: args.host,
     sandboxMode: args.sandbox,
+    supervisor: supervisorConfig(env),
     insecure: args.insecure,
     publicDocs: args.publicDocs,
     publicOrigin: env.CTGOV_PUBLIC_ORIGIN?.trim() || undefined,
@@ -158,7 +184,7 @@ async function main(): Promise<void> {
   if (args.insecure || args.publicDocs) {
     throw new Error("--insecure and --public-docs apply to --http only.");
   }
-  await startStdioServer({ sandboxMode: args.sandbox });
+  await startStdioServer({ sandboxMode: args.sandbox, supervisor: supervisorConfig(env) });
 }
 
 main().catch((err: unknown) => {
