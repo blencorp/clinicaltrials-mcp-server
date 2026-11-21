@@ -512,10 +512,11 @@ the custom domain, and sets `PORT` + `x-forwarded-for` for you.
    ```
 4. **Health check path** — set to `/healthz` in Railway's service settings.
 
-`railway.json` starts the service with `--http --public-docs`: anonymous and docs-only
-(`search_api`, `describe_schema`; no `execute`). To offer `execute`, configure auth as above, put
-Deno in the image, and drop `--public-docs` — authenticated serving runs code only in the Deno
-process sandbox.
+The image starts the service with `--http --public-docs` by default (its `CMD`; `railway.json`
+says the same): anonymous and docs-only (`search_api`, `describe_schema`; no `execute`). To offer
+`execute`, configure auth as above and run the image with `--http` (override the command, e.g.
+`docker run … <image> --http`) — authenticated serving runs code only in the Deno process sandbox,
+which the image includes.
 
 Railway has no managed WAF. The in-process per-IP limiter (above) handles
 throttling, but if you want the AWS-equivalent Anthropic-only ingress

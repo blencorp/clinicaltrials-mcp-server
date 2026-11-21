@@ -60,4 +60,8 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["/usr/bin/tini", "--", "node", "dist/bin.js", "--http"]
+# The image's default is the public hosting mode: anonymous and docs-only (no execute), so it starts
+# safely with no auth configured and does not depend on a platform start command (Railway stops
+# reading railway.json on 2026-12-01). With auth configured, run it with `--http` instead.
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "dist/bin.js"]
+CMD ["--http", "--public-docs"]
