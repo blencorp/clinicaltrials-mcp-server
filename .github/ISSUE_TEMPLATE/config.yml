@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/blencorp/clinicaltrials-mcp-server/security/advisories/new
+    about: Sandbox escapes, authentication bypasses and credential leaks go to a private advisory, never a public issue.
+  - name: Documentation
+    url: https://clinicaltrials.mcp.blencorp.com/docs/
+    about: Connect guides, recipes and the SDK reference. Check here before you open an issue.
+  - name: A problem with a study record
+    url: https://clinicaltrials.gov/about-site/contact-us
+    about: Records are registered by their sponsors and published by ClinicalTrials.gov, not by this project. Contact them about wrong or missing data.

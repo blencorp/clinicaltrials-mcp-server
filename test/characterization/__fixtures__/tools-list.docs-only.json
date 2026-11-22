@@ -1,0 +1,185 @@
+[
+  {
+    "name": "search_api",
+    "title": "Search ClinicalTrials.gov API surface",
+    "description": "BM25 search over the ClinicalTrials.gov SDK methods (ctgov.studies.*, ctgov.stats.*, ctgov.version) and the curated study-field dictionary. Returns method signatures and runnable JavaScript examples for use in `execute`. Use it before writing code: the SDK takes flat dotted keys (\"query.cond\", \"filter.overallStatus\"), not nested objects.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-text query over the ClinicalTrials.gov SDK methods and field documentation (ctgov.*) (for example: recruiting studies by condition)."
+        },
+        "k": {
+          "default": 10,
+          "description": "Max number of results to return",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "endpoint",
+                  "field"
+                ]
+              },
+              "binding": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              },
+              "example": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "binding",
+              "description"
+            ]
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hits",
+        "note"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "describe_schema",
+    "title": "Describe ClinicalTrials.gov SDK and study fields",
+    "description": "Look up an SDK method, query-syntax note or study field by exact dotted id (`path`, e.g. \"ctgov.studies.search\", \"ctgov.syntax.paging\", \"ctgov.fields.protocolSection.statusModule.overallStatus\") or by namespace `prefix` (e.g. \"ctgov.studies\", \"ctgov.fields.protocolSection.designModule\"); exactly one of them. Field reference: https://clinicaltrials.gov/data-api/about-api/study-data-structure.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Exact dotted id, e.g. 'ctgov.studies.search' or 'ctgov.fields.protocolSection.statusModule.overallStatus'",
+          "type": "string"
+        },
+        "prefix": {
+          "description": "Prefix to enumerate, e.g. 'ctgov.studies' or 'ctgov.fields.protocolSection.statusModule'",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "path"
+          ],
+          "not": {
+            "required": [
+              "prefix"
+            ]
+          }
+        },
+        {
+          "required": [
+            "prefix"
+          ],
+          "not": {
+            "required": [
+              "path"
+            ]
+          }
+        }
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "found": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "endpoint",
+                  "field"
+                ]
+              },
+              "binding": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              },
+              "example": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "binding",
+              "description"
+            ]
+          }
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "found"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

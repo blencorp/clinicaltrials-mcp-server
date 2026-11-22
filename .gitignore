@@ -15,6 +15,8 @@ tmp/
 
 # MCPB build artifacts
 .mcpb/
+mcpb-build/
+release-notes.generated.md
 *.mcpb
 
 # Environment variables
@@ -55,3 +57,7 @@ video/
 # OS
 .DS_Store
 Thumbs.db
+
+# Playwright
+test-results/
+playwright-report/

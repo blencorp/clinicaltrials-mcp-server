@@ -1,25 +1,21 @@
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  isDenoAvailable,
-  isIsolateAvailable,
-  selectSandbox,
-  type SandboxMode,
-} from "../sandbox/index.js";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import type { Dispatcher } from "undici";
+import type { SandboxKind } from "../sandbox/types.js";
+import { buildSupervisor, resolveSupervisorConfig, type SupervisorConfig } from "../supervisor/index.js";
 import { buildMcpServer } from "./mcpServer.js";
+import type { CatalogDeps } from "./toolCatalog.js";
 import { logger } from "../util/logger.js";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
-export interface StartOptions {
-  sandboxMode?: SandboxMode;
-  /** Subject attached to audit events when run in stdio (no OAuth). */
-  subject?: string;
+export interface StdioStartOptions {
+  sandboxMode?: SandboxKind;
+  /** undici dispatcher for upstream requests (tests). */
+  dispatcher?: Dispatcher;
+  /** Limits and upstream settings (bin.ts maps the environment onto this); defaults otherwise. */
+  supervisor?: Partial<SupervisorConfig>;
+  /** Prebuilt dependencies (tests). */
+  deps?: CatalogDeps;
 }
 
-// Keep strong references for the process lifetime. Some hosts restart quickly
-// and we do not want transport/server objects becoming GC candidates after
-// startStdioServer() returns.
-let activeServer: Server | undefined;
-let activeTransport: StdioServerTransport | undefined;
 let processHooksInstalled = false;
 
 function installProcessDiagnostics(): void {
@@ -54,37 +50,21 @@ function installProcessDiagnostics(): void {
   });
 }
 
-export async function startStdioServer(opts: StartOptions = {}): Promise<void> {
+export async function startStdioServer(opts: StdioStartOptions = {}): Promise<void> {
   installProcessDiagnostics();
-  const executorLabel = isIsolateAvailable()
-    ? "isolate"
-    : isDenoAvailable()
-      ? "deno"
-      : "unavailable";
-  const serverOpts: Parameters<typeof buildMcpServer>[0] = {
-    resolveExecutor: () => selectSandbox(opts.sandboxMode ? { mode: opts.sandboxMode } : {}),
-  };
-  if (opts.subject !== undefined) serverOpts.subject = opts.subject;
-  const server = buildMcpServer(serverOpts);
-  const transport = new StdioServerTransport();
-  transport.onerror = (error) => {
-    logger.error("transport.error", {
-      err: { name: error.name, message: error.message, stack: error.stack },
-    });
-  };
-  transport.onclose = () => {
-    logger.warn("transport.close");
-  };
-  server.onerror = (error) => {
-    logger.error("server.error", {
-      err: { name: error.name, message: error.message, stack: error.stack },
-    });
-  };
-  server.onclose = () => {
-    logger.warn("server.close");
-  };
-  await server.connect(transport);
-  activeServer = server;
-  activeTransport = transport;
-  logger.info("server.ready", { transport: "stdio", executor: executorLabel });
+  const deps = opts.deps ?? await buildSupervisor(resolveSupervisorConfig({
+    ...opts.supervisor,
+    ...(opts.sandboxMode ? { sandbox: opts.sandboxMode } : {}),
+    ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
+  }));
+  // stdio is unauthenticated and single-tenant: there is no subject to scope quotas by.
+  //
+  // `serveStdio` reports every out-of-band failure (transport start, a throwing factory,
+  // message-pump errors) through `onerror` and swallows it otherwise; without this the
+  // process would log `server.ready` and then answer every request with -32603 in silence.
+  serveStdio(() => buildMcpServer(deps), {
+    onerror: (err) =>
+      logger.error("stdio.error", { err: { name: err.name, message: err.message, stack: err.stack } }),
+  });
+  logger.info("server.ready", { transport: "stdio", executor: deps.sandbox?.kind ?? "none" });
 }

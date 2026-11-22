@@ -5,61 +5,222 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The release workflow runs these exact gates on the commit it publishes.
+  workflow_call:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # github.workflow is the caller's name under workflow_call, so a release run and the push run
+  # of the same commit never cancel each other.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  node:
-    runs-on: ubuntu-24.04
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24', '26']
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ctgov-ci
+          POSTGRES_DB: ctgov_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:ctgov-ci@localhost:5432/ctgov_test
+      # Sandbox and database tests may not skip in CI (test/required-runners.spec.ts).
+      CTGOV_REQUIRE_RUNNERS: '1'
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: 10.33.0
-
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      # pnpm version is read from the "packageManager" field in package.json.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22.x"
-          cache: "pnpm"
-
-      - name: Install (include isolated-vm build)
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        run: pnpm test
-
-      - name: Build
-        run: pnpm build
-
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.8
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level moderate
+      # The documentation site (site/) has its own lockfile; the Docker job builds it.
+      - run: pnpm audit --audit-level moderate
+        working-directory: site
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
       - name: Smoke-test CLI
         run: node dist/bin.js --version
+      # Account mode's tests serve the built portal (dist/web), so build before testing.
+      - run: pnpm test
 
-  docker:
-    runs-on: ubuntu-24.04
-    needs: node
+  package:
+    name: npm package + MCPB bundle
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: npm package contents
+        run: |
+          npm pack --dry-run --json --ignore-scripts > pack.json
+          node -e "const f=JSON.parse(require('fs').readFileSync('pack.json'))[0].files.map(x=>x.path);for(const p of ['LICENSE','NOTICE','CHANGELOG.md','SECURITY.md','dist/bin.js','dist/web/THIRD_PARTY_NOTICES.txt','schema/ctgov.json'])if(!f.includes(p)){console.error('missing '+p);process.exit(1)};if(f.some(p=>/^(\.env|\.local|test|site|docs|docs-site|web|src|examples|legal|mcpb-build)\//.test(p)||/^\.env/.test(p))){console.error('unexpected files');process.exit(1)}"
+      - run: pnpm mcpb:prepare && pnpm mcpb:pack
+      # Run the bundle as a desktop host does: plain node, minimal env, no Deno, no repo node_modules.
+      - name: MCPB smoke (execute in a clean directory)
+        run: |
+          mkdir -p /tmp/mcpb && cd /tmp/mcpb && unzip -q "$GITHUB_WORKSPACE/clinicaltrials-mcp-server.mcpb"
+          test -f LICENSE && test -f NOTICE
+          node "$GITHUB_WORKSPACE/scripts/mcpb-smoke.mjs" /tmp/mcpb
+      # The manifest also admits Node 24 (engines floor): run the same bundle there.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: MCPB smoke on Node 24
+        run: node --version && node "$GITHUB_WORKSPACE/scripts/mcpb-smoke.mjs" /tmp/mcpb
 
-      - uses: docker/setup-buildx-action@v3
+  accessibility:
+    # The portal and the documentation site in a real browser: axe-core (WCAG 2.0-2.2 A/AA) on
+    # every page and state, light and dark, 1280 and 320 px, plus landmark, focus and announcement
+    # checks and the signed-in journey (web/e2e). Manual checks are in docs/accessibility.md.
+    name: accessibility (portal + docs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The signed-in journey (web/e2e/journey.spec.ts) runs the real account server.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ctgov-ci
+          POSTGRES_DB: ctgov_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:ctgov-ci@localhost:5432/ctgov_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+          cache: 'pnpm'
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            site/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile
+        working-directory: site
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.8
+      # The browser version is pinned by @playwright/test in the lockfile.
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:web
 
-      - name: Build image (no push)
-        uses: docker/build-push-action@v6
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: deploy/Dockerfile
-          platforms: linux/amd64
+          file: ./deploy/Dockerfile
           push: false
+          load: true
           tags: clinicaltrial-mcp-server:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Refuses authenticated HTTP without an auth provider
+        run: |
+          if docker run --rm -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com clinicaltrial-mcp-server:ci --http; then echo "started without auth"; exit 1; fi
+      - name: Refuses --public-docs together with an auth provider
+        run: |
+          if docker run --rm -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -e CTGOV_AUTH_PROVIDER=clerk clinicaltrial-mcp-server:ci --http --public-docs; then echo "started with a provider"; exit 1; fi
+      - name: Refuses account mode together with --public-docs or --insecure, and without --http
+        run: |
+          acct=(-e CTGOV_AUTH_PROVIDER=accounts -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -e DATABASE_URL=postgres://u:p@127.0.0.1:1/x -e BETTER_AUTH_SECRET=0123456789012345678901234567890123 -e GOOGLE_CLIENT_ID=i -e GOOGLE_CLIENT_SECRET=s)
+          if docker run --rm "${acct[@]}" clinicaltrial-mcp-server:ci --http --public-docs; then echo "started with --public-docs"; exit 1; fi
+          if docker run --rm "${acct[@]}" clinicaltrial-mcp-server:ci --http --insecure; then echo "started with --insecure"; exit 1; fi
+          if docker run --rm "${acct[@]}" clinicaltrial-mcp-server:ci; then echo "started without --http"; exit 1; fi
+      - name: Serves the docs-only default
+        run: |
+          docker run -d --name smoke -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -p 127.0.0.1:8080:8080 clinicaltrial-mcp-server:ci
+          for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/health | grep -q '"protocol":"2026-07-28"'
+          docker rm -f smoke
+      - name: Runs execute in the Deno sandbox behind bearer authentication, and refuses it docs-only
+        # Inside the image: an http JWKS URL is only accepted on loopback, and loopback is the container.
+        run: |
+          docker run --rm -v "$PWD/scripts/docker-smoke.mjs:/app/docker-smoke.mjs:ro" --entrypoint node clinicaltrial-mcp-server:ci docker-smoke.mjs
+
+  conventional-commits:
+    name: conventional commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The release pipeline computes versions and the CHANGELOG from conventional commit
+      # subjects, so non-conforming subjects are a build error, not a style nit. Merge commits
+      # are exempt (the release script skips them too). This repository predates the convention
+      # ("Fix video source path in README.md" is in main's history), so with no tag to start
+      # from, the check starts at .release-base, the commit the convention began after.
+      - name: Validate commit subjects
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            RANGE="$BASE..$HEAD_SHA"
+          elif git rev-parse -q --verify "$BEFORE^{commit}" >/dev/null 2>&1; then
+            RANGE="$BEFORE..$HEAD_SHA"
+          elif TAG=$(git describe --tags --abbrev=0 2>/dev/null); then
+            RANGE="$TAG..$HEAD_SHA"
+          else
+            ROOT=$(tr -d '[:space:]' < .release-base)
+            git rev-parse -q --verify "$ROOT^{commit}" >/dev/null || { echo "::error::.release-base names no commit: $ROOT"; exit 1; }
+            RANGE="$ROOT..$HEAD_SHA"
+          fi
+          echo "checking $RANGE"
+          git log --no-merges --format='%s' "$RANGE" \
+            | { grep -vE '^(feat|fix|docs|chore|ci|test|refactor|perf|build|style|revert)(\([^)]*\))?!?: .' || true; } > /tmp/bad-subjects
+          if [ -s /tmp/bad-subjects ]; then
+            echo "Non-conventional commit subjects found:"
+            cat /tmp/bad-subjects
+            echo "Format: type(scope)?: description  (types: feat fix docs chore ci test refactor perf build style revert)"
+            exit 1
+          fi
+          echo "all commit subjects conform"

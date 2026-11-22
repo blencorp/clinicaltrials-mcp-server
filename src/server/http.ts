@@ -1,50 +1,146 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import express from "express";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { AuthAdapter, Principal } from "../auth/adapter.js";
-import { buildAuthAdapter, loadAuthConfig, type AuthConfig } from "../auth/config.js";
-import { EmbeddedAs, type EmbeddedAsEndpointResult } from "../auth/embeddedAs.js";
-import { SubjectQuota } from "../supervisor/subjectQuota.js";
-import {
-  isDenoAvailable,
-  isIsolateAvailable,
-  selectSandbox,
-  type SandboxMode,
-} from "../sandbox/index.js";
-import { buildMcpServer } from "./mcpServer.js";
-import {
-  makeASMetadataFetcher,
-  protectedResourceMetadata,
-  wwwAuthenticateHeader,
-  type ASMetadataFetcher,
-} from "./wellKnown.js";
+import { createMcpHandler, type AuthInfo, type McpRequestContext } from "@modelcontextprotocol/server";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import type { Dispatcher } from "undici";
+import type { SandboxKind } from "../sandbox/types.js";
+import { buildSupervisor, resolveSupervisorConfig, type SupervisorConfig } from "../supervisor/index.js";
+import type { CatalogDeps } from "./toolCatalog.js";
+import type { RequestCtx } from "../tools/execute.js";
 import { logger } from "../util/logger.js";
-import {
-  hasRequiredResourceScope,
-  isSessionSubjectAuthorized,
-  requiredResourceScopes,
-} from "./authz.js";
+import { AuthConfigError, InsufficientScopeError, buildVerifier, type AuthConfig } from "./authz.js";
+import { DOCS_PATH, docsRoute } from "../accounts/docs.js";
 import { IpRateLimiter, clientIp } from "./ipRateLimiter.js";
+import { MCP_PROTOCOL_VERSION, SERVER_VERSION, buildMcpServer } from "./mcpServer.js";
+import {
+  RESOURCE_METADATA_PATH,
+  RESOURCE_METADATA_ROOT_PATH,
+  bearerChallenge,
+  protectedResourceMetadata,
+} from "./wellKnown.js";
 
 export interface HttpServerOptions {
   port?: number;
   host?: string;
-  sandboxMode?: SandboxMode;
-  /** When true, skip bearer validation (development only!). */
+  /** Sandbox runner for `execute` (CTGOV_SANDBOX / --sandbox, resolved by the caller). */
+  sandboxMode?: SandboxKind;
+  /**
+   * No authentication, for one developer on their own machine: runs code in whichever sandbox
+   * is available. Cannot be combined with `publicDocs` or with a configured auth provider.
+   */
   insecure?: boolean;
+  /**
+   * Anonymous public hosting: no authentication and docs-only tools (search_api,
+   * describe_schema). `execute` is not offered and no sandbox is created. Cannot be combined
+   * with `insecure` or with a configured auth provider.
+   */
+  publicDocs?: boolean;
+  /**
+   * Where the built documentation site is (tests). Default: docs-site/, a sibling of dist/, which
+   * the Docker image carries. Served at /docs in `publicDocs` mode only (account mode serves it
+   * itself); when the directory is missing there is no /docs.
+   */
+  docsRoot?: string;
+  /** Bearer-token verification. Default: no provider. */
+  auth?: AuthConfig;
+  /**
+   * Public origin clients use (e.g. https://mcp.example.com). Its host is always a trusted Host
+   * and its origin a trusted Origin for the anonymous endpoint; it is also the base of the
+   * OAuth protected-resource metadata.
+   */
+  publicOrigin?: string;
+  /** Extra Host header values accepted (DNS-rebinding protection), besides the public origin and loopback. */
+  allowedHosts?: string[];
+  /**
+   * Extra Origin values accepted on the ANONYMOUS endpoint (exact origin strings). Bearer-authenticated
+   * endpoints accept any Origin: hosted connectors (claude.ai, chatgpt.com) send their own.
+   */
+  allowedOrigins?: string[];
+  /** Per-IP rate limit: sustained requests per second and burst. */
+  ipRps?: number;
+  ipBurst?: number;
+  /**
+   * Header the reverse proxy in front of this server overwrites with the client address
+   * (Railway: `x-real-ip`). Unset keys the per-IP limit on the TCP peer.
+   */
+  clientIpHeader?: string;
+  /** Limits and upstream settings (bin.ts maps the environment onto this); defaults otherwise. */
+  supervisor?: Partial<SupervisorConfig>;
+  /** undici dispatcher for upstream requests (tests inject a MockAgent). */
+  dispatcher?: Dispatcher;
+  /** Prebuilt dependencies (tests); the caller then owns the sandbox and the shutdown signal. */
+  deps?: CatalogDeps;
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+export interface HttpHandle {
+  close: () => Promise<void>;
+  port: number;
+  host: string;
+}
+
+const MCP_PATH = "/mcp";
+const HEALTH_PATH = "/health";
+
+/** Key the tool-catalog context off the subject this request authenticated as. */
+const SUBJECT_KEY = "ctgov.subject";
+/** Client address of an unauthenticated caller, for execution admission (never for quotas). */
+const CLIENT_KEY = "ctgov.client";
+
+/** Largest MCP request body accepted (execute takes a code string of at most a few KiB). */
+export const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+
+/** Cap on echoed error text: handler rejections quote caller-supplied headers and body. */
+const MAX_LOGGED_ERROR_CHARS = 300;
+
+const truncate = (message: string): string =>
+  message.length > MAX_LOGGED_ERROR_CHARS ? `${message.slice(0, MAX_LOGGED_ERROR_CHARS)}…[truncated]` : message;
+
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const isLoopbackHost = (host: string): boolean => LOOPBACK_HOSTNAMES.has(host.toLowerCase());
+
+/**
+ * Origin validation for the anonymous endpoint (MCP spec MUST): the server's own origin, the
+ * configured allowlist and loopback origins pass; anything else, including "null", does not.
+ */
+export function originAllowed(originHeader: string, ownOrigin: string, allowlist: string[]): boolean {
+  const value = originHeader.toLowerCase();
+  if (value === ownOrigin.toLowerCase()) return true;
+  if (allowlist.some((allowed) => allowed.toLowerCase() === value)) return true;
+  try {
+    return LOOPBACK_HOSTNAMES.has(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** The token of an `Authorization: Bearer <token>` header; the scheme is case-insensitive (RFC 9110). */
+export function bearerToken(header: string | undefined): string | undefined {
+  return /^bearer +(\S+)$/i.exec(header ?? "")?.[1];
+}
+
+function requestCtxOf(ctx: McpRequestContext): RequestCtx {
+  const subject = ctx.authInfo?.extra?.[SUBJECT_KEY];
+  const client = ctx.authInfo?.extra?.[CLIENT_KEY];
+  return {
+    ...(typeof subject === "string" ? { subject } : {}),
+    ...(typeof client === "string" ? { client } : {}),
+  };
+}
+
+function reply(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(payload),
     "cache-control": "no-store",
+    ...headers,
   });
   res.end(payload);
 }
 
-function sendPlain(res: ServerResponse, status: number, body: string, headers: Record<string, string> = {}): void {
+function plain(res: ServerResponse, status: number, body: string, headers: Record<string, string> = {}): void {
   res.writeHead(status, {
     "content-type": "text/plain; charset=utf-8",
     "content-length": Buffer.byteLength(body),
@@ -54,385 +150,319 @@ function sendPlain(res: ServerResponse, status: number, body: string, headers: R
   res.end(body);
 }
 
-class HttpBodyTooLargeError extends Error {
-  readonly statusCode = 413;
+const CORS_ALLOW_HEADERS =
+  "Authorization, Content-Type, Accept, Mcp-Protocol-Version, Mcp-Session-Id, Mcp-Method, Mcp-Name, Last-Event-ID";
+const CORS_EXPOSE_HEADERS = "WWW-Authenticate, Mcp-Session-Id, Mcp-Protocol-Version";
 
-  constructor(readonly maxBytes: number) {
-    super(`request body too large (max ${maxBytes} bytes)`);
-    this.name = "HttpBodyTooLargeError";
+/**
+ * CORS for a response. No credentials are ever allowed (bearer tokens only), so `*` grants a
+ * foreign page nothing it could not do with the token alone; the anonymous endpoint echoes
+ * only an origin it already validated.
+ */
+function corsHeaders(allowOrigin: string): Record<string, string> {
+  return {
+    "access-control-allow-origin": allowOrigin,
+    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-expose-headers": CORS_EXPOSE_HEADERS,
+    "access-control-max-age": "600",
+    ...(allowOrigin === "*" ? {} : { vary: "Origin" }),
+  };
+}
+
+export async function startHttpServer(opts: HttpServerOptions = {}): Promise<HttpHandle> {
+  const { insecure = false, publicDocs = false } = opts;
+  const auth: AuthConfig = opts.auth ?? { provider: "none" };
+  if (insecure && publicDocs) throw new Error("--insecure and --public-docs are mutually exclusive");
+  if ((insecure || publicDocs) && auth.provider !== "none") {
+    throw new AuthConfigError(
+      `${insecure ? "--insecure" : "--public-docs"} cannot be combined with CTGOV_AUTH_PROVIDER=${auth.provider}: it would serve without the authentication that provider is configured for. Unset the provider, or drop the flag to serve authenticated.`,
+    );
   }
-}
-
-async function readBodyWithLimit(req: IncomingMessage, maxBytes: number): Promise<string> {
-  const header = req.headers["content-length"];
-  const declaredLength = Array.isArray(header) ? header[0] : header;
-  if (declaredLength) {
-    const parsedLength = Number(declaredLength);
-    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
-      throw new HttpBodyTooLargeError(maxBytes);
-    }
-  }
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const c of req) {
-    const chunk = c as Buffer;
-    total += chunk.length;
-    if (total > maxBytes) {
-      req.destroy();
-      throw new HttpBodyTooLargeError(maxBytes);
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-function buildEmbeddedAs(cfg: AuthConfig): EmbeddedAs {
-  const raw = process.env.CTGOV_EMBEDDED_USERS ?? "";
-  const users = new Map<string, string>();
-  for (const pair of raw.split(",")) {
-    const [u, p] = pair.split(":");
-    if (u && p) users.set(u, p);
-  }
-  return new EmbeddedAs({
-    issuer: cfg.issuer,
-    audience: cfg.resource,
-    scopesSupported: cfg.scopesSupported,
-    userResolver: async (ctx) => {
-      const h = ctx.headers.authorization;
-      const header = Array.isArray(h) ? h[0] : h;
-      const m = header && /^Basic\s+(.+)$/i.exec(header);
-      if (!m) return null;
-      const decoded = Buffer.from(m[1]!, "base64").toString("utf8");
-      const colon = decoded.indexOf(":");
-      if (colon < 0) return null;
-      const user = decoded.slice(0, colon);
-      const pass = decoded.slice(colon + 1);
-      const expected = users.get(user);
-      if (!expected) return null;
-      const aBuf = Buffer.from(pass);
-      const eBuf = Buffer.from(expected);
-      if (aBuf.length !== eBuf.length || !timingSafeEqual(aBuf, eBuf)) return null;
-      return { sub: user, scopes: ctx.requestedScopes };
-    },
-  });
-}
-
-function writeAsResult(res: ServerResponse, out: EmbeddedAsEndpointResult): void {
-  const headers: Record<string, string> = { ...(out.headers ?? {}) };
-  if (out.location) headers.location = out.location;
-  res.writeHead(out.status, headers);
-  res.end(out.body ?? "");
-}
-
-function pickBearer(req: IncomingMessage): string | null {
-  const h = req.headers.authorization;
-  if (!h) return null;
-  const m = /^Bearer\s+(.+)$/i.exec(h);
-  return m && m[1] ? m[1].trim() : null;
-}
-
-export async function startHttpServer(opts: HttpServerOptions = {}): Promise<{ close: () => Promise<void>; port: number }> {
-  const port = opts.port ?? Number(process.env.PORT ?? 8080);
-  const host = opts.host ?? process.env.HOST ?? "0.0.0.0";
-
-  const authConfig: AuthConfig = loadAuthConfig();
-  const authAdapter: AuthAdapter | null = opts.insecure
-    ? null
-    : buildAuthAdapter(authConfig);
-  const asFetcher: ASMetadataFetcher = makeASMetadataFetcher(authConfig);
-  const executorLabel = isIsolateAvailable()
-    ? "isolate"
-    : isDenoAvailable()
-      ? "deno"
-      : "unavailable";
-  const quota = new SubjectQuota();
-  const embeddedAs = authConfig.provider === "embedded" ? buildEmbeddedAs(authConfig) : null;
-  const ipLimiter = new IpRateLimiter({
-    ratePerSec: Number(process.env.CTGOV_IP_RPS ?? 5),
-    burst: Number(process.env.CTGOV_IP_BURST ?? 20),
-  });
-
-  if (!authAdapter && !opts.insecure) {
-    throw new Error(
-      "HTTP transport requires auth configuration. Set CTGOV_AUTH_PROVIDER=clerk (or embedded) and CTGOV_AUTH_ISSUER, or pass --insecure (development only).",
+  const unauthenticated = insecure || publicDocs;
+  const verifier = buildVerifier(auth);
+  if (!verifier && !unauthenticated) {
+    throw new AuthConfigError(
+      "HTTP transport requires auth configuration. Set CTGOV_AUTH_PROVIDER (generic-oidc, clerk, workos, auth0) with CTGOV_AUTH_ISSUER, CTGOV_AUTH_AUDIENCE and CTGOV_AUTH_JWKS_URL; for anonymous docs-only hosting pass --public-docs; for local development only, --insecure.",
     );
   }
 
-  const server = createServer(async (req, res) => {
+  const port = opts.port ?? 8080;
+  const host = opts.host ?? "127.0.0.1";
+  const explicitHosts = (opts.allowedHosts ?? []).map((h) => h.toLowerCase());
+  const publicUrl = opts.publicOrigin ? new URL(opts.publicOrigin) : undefined;
+  if (!isLoopbackHost(host) && !publicUrl && explicitHosts.length === 0) {
+    throw new AuthConfigError(
+      `Listening on ${host} needs the hostnames clients use: set CTGOV_PUBLIC_ORIGIN (e.g. https://mcp.example.com) or CTGOV_ALLOWED_HOSTS. Requests are checked against them to block DNS rebinding.`,
+    );
+  }
+  // Clients find the authorization server through the protected-resource metadata, whose
+  // `resource` must be the URL they connect to (RFC 9728); beyond loopback only the public
+  // origin can say what that is.
+  if (verifier && !isLoopbackHost(host) && !publicUrl) {
+    throw new AuthConfigError(
+      `Authenticated serving on ${host} needs CTGOV_PUBLIC_ORIGIN (e.g. https://mcp.example.com): OAuth metadata must name the URL clients connect to.`,
+    );
+  }
+  if (insecure && !isLoopbackHost(host)) {
+    logger.warn("http.insecure_public", { host, note: "unauthenticated server reachable beyond this machine" });
+  }
+
+  // Authenticated serving runs many callers' code in one process: only Deno (a separate OS
+  // process) is allowed there. Fail at startup rather than on the first execute call.
+  const processIsolation = verifier !== undefined;
+  if (processIsolation && opts.sandboxMode === "isolate") {
+    throw new Error("the isolate sandbox (--sandbox isolate / CTGOV_SANDBOX=isolate) is not allowed for authenticated HTTP serving; use deno");
+  }
+  const toolSet = publicDocs ? "docs-only" : "all";
+  // Aborts every running execution when the server closes.
+  const shutdown = new AbortController();
+  // Built once: the HTTP client (cache, upstream gate), the sandbox and the limiters are shared by
+  // every request; the transport only builds a thin MCP server per request on top of them.
+  const deps = opts.deps ?? await buildSupervisor(resolveSupervisorConfig({
+    ...opts.supervisor,
+    tools: toolSet,
+    processIsolation,
+    shutdownSignal: shutdown.signal,
+    ...(opts.sandboxMode ? { sandbox: opts.sandboxMode } : {}),
+    ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
+  }));
+  if (processIsolation && deps.sandbox && deps.sandbox.kind !== "deno") {
+    logger.warn("http.deno_missing", {
+      note: "authenticated serving runs execute only in Deno and Deno is not available: every execute call will fail",
+    });
+  }
+  const executorLabel = deps.sandbox?.kind ?? "none";
+
+  const limiter = new IpRateLimiter(opts.ipRps ?? 5, opts.ipBurst ?? 20);
+  // Stateless: the factory runs once per request, so the subject a tool sees is always the one
+  // this request's own bearer token verified as. There is no session to bind, reuse, or outlive
+  // a token.
+  const mcpHandler = createMcpHandler(
+    (ctx) => buildMcpServer(deps, requestCtxOf(ctx)),
+    {
+      legacy: "stateless",
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+      // This server declares only `tools`, but the SDK routes `subscriptions/listen` regardless
+      // and would otherwise hold up to 1024 long-lived SSE streams per handler. `0` refuses them all.
+      maxSubscriptions: 0,
+      // Rejections carry attacker-supplied header/body fragments, so cap what reaches stderr.
+      onerror: (err) => logger.warn("mcp.handler.error", { error: truncate(err.message) }),
+    },
+  );
+  // The adapter buffers the body before the handler's own cap runs (its default is 4 MiB), so it
+  // gets the same cap: an oversized request is refused while it is still arriving.
+  const nodeHandler = toNodeHandler(mcpHandler, {
+    maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+    onerror: (err) => logger.warn("mcp.adapter.error", { error: truncate(err.message) }),
+  });
+
+  // The documentation site, served by the anonymous docs-only server like account mode serves it.
+  // Static and public; the handler sets its own CSP, caching and 404 page (accounts/docs.ts).
+  const docsRouter = publicDocs ? docsRoute(opts.docsRoot ?? fileURLToPath(new URL("../../docs-site/", import.meta.url))) : undefined;
+  const docsApp = docsRouter
+    ? express()
+        .disable("x-powered-by")
+        .use(DOCS_PATH, docsRouter)
+        .use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+          logger.error("http.docs_failed", { err: err instanceof Error ? { name: err.name, message: truncate(err.message) } : String(err) });
+          if (!res.headersSent) res.status(500).type("text/plain").send("internal error");
+        })
+    : undefined;
+
+  let ownOrigin = "";
+  let trustedHosts = new Set<string>();
+
+  // Never rejects: every failure is answered inside (500 at worst), so the request is never left hanging.
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const traceId = randomUUID();
     res.setHeader("x-trace-id", traceId);
     let url: URL;
     try {
-      url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      url = new URL(req.url ?? "/", "http://localhost");
     } catch {
-      // Malformed request-target (e.g. bot scanners sending "//evil.txt").
-      // Reject early without crashing the process.
-      sendPlain(res, 400, "bad request");
+      // Malformed request-target (e.g. bot scanners sending "//evil.txt"): reject without crashing.
+      plain(res, 400, "bad request");
       return;
     }
-
     try {
-      // Per-IP rate limit for authenticated and AS endpoints. Health checks
-      // stay free so platform probes aren't affected.
-      if (url.pathname.startsWith("/mcp") || url.pathname.startsWith("/as/")) {
-        const ip = clientIp(req);
-        const retryAfter = ipLimiter.check(ip);
-        if (retryAfter !== null) {
-          res.setHeader("retry-after", String(retryAfter));
-          sendJson(res, 429, { error: "rate_limited", retryAfter });
-          return;
-        }
-      }
-
-      // Health
-      if (req.method === "GET" && url.pathname === "/health") {
-        sendJson(res, 200, { status: "ok", timestamp: new Date().toISOString() });
-        return;
-      }
-      if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) {
-        sendJson(res, 200, { ok: true, executor: executorLabel, auth: authAdapter ? authConfig.provider : "off" });
+      // Platform health probes cannot be given a trusted Host (Railway sends
+      // `Host: healthcheck.railway.app`), and the endpoint serves no user data.
+      if (req.method === "GET" && url.pathname === HEALTH_PATH) {
+        reply(res, 200, { status: "ok", version: SERVER_VERSION, protocol: MCP_PROTOCOL_VERSION });
         return;
       }
 
-      // RFC 9728 Protected Resource Metadata — only when auth is on.
-      // For unauthenticated public deployments (provider=none / --insecure),
-      // there is no protected resource to advertise; return 404.
-      if (req.method === "GET" && url.pathname === "/.well-known/oauth-protected-resource") {
-        if (!authAdapter) {
-          sendJson(res, 404, { error: "no protected resource configured" });
-          return;
-        }
-        sendJson(res, 200, protectedResourceMetadata(authConfig));
+      // DNS rebinding protection: the Host header must be one we were configured with. The
+      // trusted origin is never derived from the request itself.
+      const hostHeader = String(req.headers.host ?? "").toLowerCase();
+      if (!trustedHosts.has(hostHeader)) {
+        reply(res, 421, { error: "host_not_allowed" });
         return;
       }
 
-      // RFC 8414 AS Metadata — only when auth is on.
-      if (req.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
-        if (!authAdapter) {
-          sendJson(res, 404, { error: "no authorization server configured" });
-          return;
-        }
-        if (embeddedAs) {
-          sendJson(res, 200, embeddedAs.metadata());
-          return;
-        }
-        const doc = await asFetcher.get();
-        if (!doc) {
-          sendJson(res, 404, { error: "no authorization server configured" });
-          return;
-        }
-        sendJson(res, 200, doc);
+      // Before the per-IP limiter, as in account mode: static pages are not MCP traffic.
+      if (docsApp && (url.pathname === DOCS_PATH || url.pathname.startsWith(`${DOCS_PATH}/`))) {
+        docsApp(req, res);
         return;
       }
 
-      // Embedded AS endpoints (only mounted when provider=embedded).
-      if (embeddedAs) {
-        if (req.method === "GET" && url.pathname === "/as/jwks.json") {
-          sendJson(res, 200, await embeddedAs.jwks());
-          return;
-        }
-        if (req.method === "POST" && url.pathname === "/as/register") {
-          const body = await readBodyWithLimit(req, 64 * 1024);
-          let parsed: unknown = null;
-          try {
-            parsed = body ? JSON.parse(body) : null;
-          } catch {
-            sendJson(res, 400, { error: "invalid_client_metadata" });
-            return;
-          }
-          writeAsResult(res, embeddedAs.register(parsed));
-          return;
-        }
-        if (req.method === "GET" && url.pathname === "/as/authorize") {
-          const query: Record<string, string> = {};
-          url.searchParams.forEach((v, k) => {
-            query[k] = v;
+      const ip = clientIp(req, opts.clientIpHeader);
+      if (!limiter.allow(ip)) {
+        reply(res, 429, { error: "rate_limited" }, { "retry-after": String(Math.max(1, Math.ceil(1 / (opts.ipRps ?? 5)))) });
+        return;
+      }
+
+      const isMetadata =
+        url.pathname === RESOURCE_METADATA_PATH || url.pathname === RESOURCE_METADATA_ROOT_PATH;
+      if (isMetadata) {
+        // Discovery documents are public and fetched cross-origin by browser-based clients.
+        if (req.method === "OPTIONS") {
+          res.writeHead(204, {
+            ...corsHeaders("*"),
+            "access-control-allow-headers": CORS_ALLOW_HEADERS,
           });
-          const out = await embeddedAs.authorize({ query, headers: req.headers });
-          writeAsResult(res, out);
+          res.end();
           return;
         }
-        if (req.method === "POST" && url.pathname === "/as/token") {
-          const body = await readBodyWithLimit(req, 16 * 1024);
-          const form: Record<string, string> = {};
-          new URLSearchParams(body).forEach((v, k) => {
-            form[k] = v;
-          });
-          writeAsResult(res, await embeddedAs.token(form));
+        if (req.method !== "GET") {
+          reply(res, 405, { error: "method_not_allowed" }, { allow: "GET, OPTIONS" });
           return;
         }
-      }
-
-      // MCP endpoint (POST = request, GET = SSE stream, DELETE = end session)
-      if (url.pathname === "/mcp") {
-        if (req.method === "POST" || req.method === "GET" || req.method === "DELETE") {
-          await handleMcp(req, res);
+        if (!verifier) {
+          reply(res, 404, { error: "no protected resource configured" });
           return;
         }
-        res.writeHead(405, { allow: "POST, GET, DELETE" }).end();
+        reply(res, 200, protectedResourceMetadata(auth, `${ownOrigin}${MCP_PATH}`), corsHeaders("*"));
         return;
       }
 
-      // Unknown
-      sendJson(res, 404, { error: "not_found", path: url.pathname });
+      if (url.pathname === MCP_PATH) {
+        await handleMcp(req, res);
+        return;
+      }
+
+      reply(res, 404, { error: "not_found", path: url.pathname });
     } catch (err) {
-      if (err instanceof HttpBodyTooLargeError) {
-        if (!res.headersSent) sendPlain(res, err.statusCode, err.message);
-        return;
-      }
       logger.error("http.unhandled", {
         traceId,
         path: url.pathname,
-        err:
-          err instanceof Error ? { name: err.name, message: err.message } : String(err),
+        err: err instanceof Error ? { name: err.name, message: truncate(err.message) } : String(err),
       });
-      if (!res.headersSent) sendJson(res, 500, { error: "internal_error", traceId });
+      if (!res.headersSent) reply(res, 500, { error: "internal_error", traceId });
     }
-  });
-
-  interface Session {
-    transport: StreamableHTTPServerTransport;
-    close: () => Promise<void>;
-    lastActivity: number;
-    subject?: string;
-  }
-  const sessions = new Map<string, Session>();
-  const SESSION_IDLE_MS = 30 * 60_000;
-  const configuredMaxSessions = Number(process.env.CTGOV_MAX_SESSIONS ?? 500);
-  const MAX_SESSIONS =
-    Number.isFinite(configuredMaxSessions) && configuredMaxSessions > 0
-      ? configuredMaxSessions
-      : 500;
-
-  // Evict idle sessions periodically.
-  const sweepTimer = setInterval(() => {
-    const cutoff = Date.now() - SESSION_IDLE_MS;
-    for (const [id, s] of sessions) {
-      if (s.lastActivity < cutoff) {
-        void s.close();
-        sessions.delete(id);
-      }
-    }
-  }, 60_000);
-  sweepTimer.unref?.();
+  };
 
   async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Auth
-    let principal: Principal | null = null;
-    if (authAdapter) {
-      const token = pickBearer(req);
-      if (!token) {
-        sendPlain(res, 401, "missing bearer token", {
-          "www-authenticate": wwwAuthenticateHeader(authConfig),
-        });
+    const originHeader = req.headers.origin;
+    const origin = typeof originHeader === "string" ? originHeader : undefined;
+    // Origin validation guards the ANONYMOUS endpoint, where a browser page could otherwise ride
+    // the visitor's network position. A bearer-authenticated request carries its own credential
+    // a foreign page cannot obtain, and hosted connectors (claude.ai, chatgpt.com) send their
+    // own Origin, so those endpoints accept any.
+    let allowOrigin = "*";
+    if (unauthenticated && origin !== undefined) {
+      const allowlist = [...(opts.allowedOrigins ?? []), ...(publicUrl ? [publicUrl.origin] : [])];
+      if (!originAllowed(origin, ownOrigin, allowlist)) {
+        reply(res, 403, { error: "origin_not_allowed", origin });
         return;
       }
-      try {
-        principal = await authAdapter.verifyAccessToken(token);
-      } catch (err) {
-        logger.warn("auth.reject", {
-          err: err instanceof Error ? { name: err.name, message: err.message } : String(err),
-        });
-        sendPlain(res, 401, "invalid bearer token", {
-          "www-authenticate": wwwAuthenticateHeader(authConfig),
-        });
-        return;
-      }
-      if (!hasRequiredResourceScope(principal.scopes, authConfig.scopesSupported)) {
-        const requiredScope = requiredResourceScopes(authConfig.scopesSupported).join(" ");
-        const authenticate = `${wwwAuthenticateHeader(authConfig)}, error="insufficient_scope"${
-          requiredScope ? `, scope="${requiredScope}"` : ""
-        }`;
-        sendPlain(res, 403, "insufficient scope", {
-          "www-authenticate": authenticate,
-        });
-        return;
-      }
+      allowOrigin = origin;
     }
-
-    const existingSessionId = req.headers["mcp-session-id"];
-    const sid = Array.isArray(existingSessionId) ? existingSessionId[0] : existingSessionId;
-
-    let session = sid ? sessions.get(sid) : undefined;
-    if (session && !isSessionSubjectAuthorized(session.subject, principal?.sub)) {
-      sendPlain(res, 403, "session subject mismatch");
+    // Only browsers send an Origin; non-browser clients get no CORS headers.
+    const cors = origin !== undefined ? corsHeaders(allowOrigin) : {};
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        ...cors,
+        "access-control-allow-headers":
+          String(req.headers["access-control-request-headers"] ?? "").slice(0, 1024) || CORS_ALLOW_HEADERS,
+        vary: "Origin, Access-Control-Request-Headers",
+      });
+      res.end();
       return;
     }
-    if (!session) {
-      if (sessions.size >= MAX_SESSIONS) {
-        sendPlain(res, 503, "session capacity exceeded");
+    // Stateless: there is no session stream (GET) and no session to end (DELETE).
+    if (req.method !== "POST") {
+      reply(res, 405, { error: "method_not_allowed" }, { allow: "POST, OPTIONS", ...cors });
+      return;
+    }
+    for (const [k, v] of Object.entries(cors)) res.setHeader(k, v);
+
+    let subject: string | undefined;
+    let token = "";
+    let scopes: string[] = [];
+    if (verifier) {
+      const bearer = bearerToken(req.headers.authorization);
+      if (!bearer) {
+        plain(res, 401, "missing bearer token", { "www-authenticate": bearerChallenge(ownOrigin) });
         return;
       }
-      // Create a new session + transport + per-session MCP server.
-      const mcpOpts: Parameters<typeof buildMcpServer>[0] = {
-        resolveExecutor: () => selectSandbox(opts.sandboxMode ? { mode: opts.sandboxMode } : {}),
-        quota,
-      };
-      if (principal?.sub) mcpOpts.subject = principal.sub;
-      const mcp = buildMcpServer(mcpOpts);
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-      });
-      const close = async () => {
-        try {
-          await transport.close();
-        } catch {
-          /* ignore */
+      token = bearer;
+      try {
+        const ctx = await verifier.verify(token);
+        subject = ctx.subject;
+        scopes = ctx.scopes;
+      } catch (err) {
+        if (err instanceof InsufficientScopeError) {
+          plain(res, 403, "insufficient scope", {
+            "www-authenticate": bearerChallenge(ownOrigin, `, error="insufficient_scope", scope="${err.required.join(" ")}"`),
+          });
+          return;
         }
-        try {
-          await mcp.close();
-        } catch {
-          /* ignore */
-        }
-      };
-      transport.onclose = () => {
-        const id = transport.sessionId;
-        if (id) sessions.delete(id);
-      };
-       
-      await mcp.connect(transport as any);
-      session = {
-        transport,
-        close,
-        lastActivity: Date.now(),
-        ...(principal?.sub !== undefined ? { subject: principal.sub } : {}),
-      };
-      // The session id is generated the first time handleRequest is called
-      // on an initialize POST. We'll register after handleRequest.
+        // Verifier details stay server-side.
+        logger.warn("auth.reject", { error: truncate((err as Error).message) });
+        plain(res, 401, "invalid bearer token", { "www-authenticate": bearerChallenge(ownOrigin, `, error="invalid_token"`) });
+        return;
+      }
     }
 
-    session.lastActivity = Date.now();
-     
-    await session.transport.handleRequest(req as any, res);
-
-    const id = session.transport.sessionId;
-    if (id && !sessions.has(id)) sessions.set(id, session);
+    // toNodeHandler forwards `req.auth` to the factory as pass-through authInfo.
+    const authInfo: AuthInfo = {
+      token,
+      clientId: subject ?? "anonymous",
+      scopes,
+      // Authenticated callers are limited per subject; an anonymous one (--insecure) per client address.
+      extra: subject !== undefined ? { [SUBJECT_KEY]: subject } : { [CLIENT_KEY]: `ip:${clientIp(req, opts.clientIpHeader)}` },
+    };
+    (req as IncomingMessage & { auth?: AuthInfo }).auth = authInfo;
+    await nodeHandler(req as Parameters<typeof nodeHandler>[0], res);
   }
 
-  await new Promise<void>((resolve) => {
+  const server = createServer((req, res) => {
+    void handle(req, res);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
     server.listen(port, host, () => resolve());
   });
+  const addr = server.address();
+  const actualPort = typeof addr === "object" && addr ? addr.port : port;
+  ownOrigin = publicUrl?.origin ?? `http://127.0.0.1:${actualPort}`;
+  trustedHosts = new Set([
+    ...explicitHosts,
+    ...(publicUrl ? [publicUrl.host.toLowerCase()] : []),
+    // Local clients and the container health check always reach us on loopback.
+    ...["localhost", "127.0.0.1", "[::1]"].map((h) => `${h}:${actualPort}`),
+  ]);
 
   logger.info("server.ready", {
     transport: "http",
-    executor: executorLabel,
-    auth: authAdapter ? authConfig.provider : "off",
-    resource: authConfig.resource,
-    port,
     host,
+    port: actualPort,
+    executor: executorLabel,
+    auth: verifier ? auth.provider : "off",
+    tools: toolSet,
+    protocol: MCP_PROTOCOL_VERSION,
   });
-
-  const actualPort = (server.address() as { port?: number } | null)?.port ?? port;
 
   return {
     port: actualPort,
+    host,
     close: async () => {
-      clearInterval(sweepTimer);
-      await Promise.all([...sessions.values()].map((s) => s.close()));
-      sessions.clear();
-      await new Promise<void>((resolve, reject) =>
-        server.close((err) => (err ? reject(err) : resolve())),
-      );
+      // Handler first: `server.close()` resolves only once every connection is idle, so an open
+      // SSE exchange would block it forever. Closing the handler aborts in-flight exchanges.
+      shutdown.abort();
+      await mcpHandler.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
 }

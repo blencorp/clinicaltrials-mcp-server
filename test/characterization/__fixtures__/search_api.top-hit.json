@@ -1,0 +1,8 @@
+{
+  "id": "ctgov.studies.search",
+  "kind": "endpoint",
+  "binding": "ctgov",
+  "description": "Search studies (GET /studies) by condition, intervention, location, sponsor or free text, with status and geo filters. Parameters are FLAT dotted string keys, never nested objects: 'query.cond', 'query.term', 'query.intr', 'query.locn', 'query.spons', 'filter.overallStatus' (array of status enums), 'filter.geo', 'filter.advanced' (Essie expression); plus fields, sort, countTotal, pageSize (1-1000) and pageToken. See ctgov.syntax.search, ctgov.syntax.essie, ctgov.syntax.geo and ctgov.syntax.paging. Returns { studies: [...], nextPageToken?, totalCount? }. Always pass fields: full study records are large and a result over 256 KiB fails.",
+  "signature": "ctgov.studies.search(params)",
+  "example": "const page = await ctgov.studies.search({ 'query.cond': 'lung cancer', 'filter.overallStatus': ['RECRUITING'], fields: ['NCTId', 'BriefTitle', 'Phase'], pageSize: 20, countTotal: true }); return { total: page.totalCount, studies: page.studies.map(s => s.protocolSection.identificationModule) }"
+}

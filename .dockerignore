@@ -1,0 +1,22 @@
+# Only what the Dockerfile COPYs is needed; keep secrets and local state out of the build context.
+**/node_modules
+dist
+.mcpb
+mcpb-build
+*.mcpb
+.git
+.claude
+.env
+.env.*
+!.env.example
+coverage
+test-results
+playwright-report
+video
+*.log
+.github
+!.github/workflows/release.yml
+site/dist
+site/.astro
+docs
+!docs/sdk-reference.md

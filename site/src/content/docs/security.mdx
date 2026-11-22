@@ -1,0 +1,43 @@
+---
+title: Security
+description: What the sandbox allows, what the hosted server stores, and how to report a vulnerability.
+---
+
+The server runs code that a model wrote, and it treats that code as untrusted.
+
+## The sandbox
+
+- **No access to your computer.** A program has no network, file system, environment, or
+  subprocess access.
+- **A check before the run.** The server parses each program and rejects imports, `eval`, and
+  references to host globals.
+- **An isolated runtime.** The program runs in a fresh V8 isolate, or in a separate Deno process
+  with no permissions. With sign-in, the server uses the Deno process only.
+- **A deadline that the server owns.** The server stops a run that passes its time limit, and a run
+  that grows past its memory limit.
+- **One way out.** A program reaches ClinicalTrials.gov only through the registered read methods of
+  the `ctgov` SDK, and every call counts against the budget of the run.
+
+## Accounts
+
+- ClinicalTrials.gov needs no key, so the server holds no API key of anyone's.
+- The hosted server stores your Google identity, hashed OAuth tokens, and per-account counters. See
+  [What the server stores](/keys/#what-the-server-stores).
+- Each request to `/mcp/account` checks its token against the database, so revoking a connection
+  takes effect at once. The server also checks the `Host` header against its own address, so a
+  web page cannot reach it by DNS rebinding.
+- The documentation site is served with its own content security policy, because it shares an origin
+  with the sign-in pages.
+
+## What the server does not do
+
+- It does not change anything at ClinicalTrials.gov. All three tools are read-only.
+- It does not give medical advice. The records are what sponsors registered.
+
+## Report a vulnerability
+
+Do not open a public issue. Open a
+[private security advisory](https://github.com/blencorp/clinicaltrials-mcp-server/security/advisories/new),
+or email opensource@blencorp.com with the subject
+`[security] clinicaltrial-mcp-server`. The full policy is in
+[SECURITY.md](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/SECURITY.md).

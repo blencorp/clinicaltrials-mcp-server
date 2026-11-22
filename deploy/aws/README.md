@@ -37,7 +37,7 @@ repo that this module creates.
 | `memory` | `1024` | Task-level memory (MiB). |
 | `clerk_issuer` | — | e.g. `https://clerk.blencorp.com`. |
 | `clerk_jwks_url` | — | Optional override. Default `${issuer}/.well-known/jwks.json`. |
-| `scopes_supported` | `ctgov.read` | Space-separated. |
+| `scopes_supported` | `ctgov:read` | Space-separated. |
 | `allow_anthropic_ingress_only` | `true` | When true, WAF allows only Anthropic IP ranges (plus health checks). |
 
 ## Deploy

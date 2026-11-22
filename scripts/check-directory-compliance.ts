@@ -5,7 +5,7 @@
  *   - /.well-known/oauth-protected-resource (RFC 9728) shape
  *   - /.well-known/oauth-authorization-server reachable or explicitly 404
  *   - POST /mcp without auth -> 401 + WWW-Authenticate + resource_metadata=...
- *   - /healthz -> 200
+ *   - /health -> 200
  *   - examples/ count >= 3
  *   - legal/{privacy-policy,terms,support}.md present
  *
@@ -41,8 +41,8 @@ await check("HTTPS target", async () => {
   if (!base.startsWith("https://")) throw new Error("base URL must be https://");
 });
 
-await check("GET /healthz returns 200", async () => {
-  const r = await fetch(`${base}/healthz`);
+await check("GET /health returns 200", async () => {
+  const r = await fetch(`${base}/health`);
   if (r.status !== 200) throw new Error(`status=${r.status}`);
 });
 
@@ -77,7 +77,7 @@ await check("POST /mcp without auth returns 401 + WWW-Authenticate with PRM hint
 await check("3+ example prompts present", async () => {
   const dir = resolve("examples");
   if (!existsSync(dir)) throw new Error("examples/ directory missing");
-  const mds = readdirSync(dir).filter((f) => f.endsWith(".md"));
+  const mds = readdirSync(dir).filter((f) => f.endsWith(".js"));
   if (mds.length < 3) throw new Error(`found ${mds.length}, need >= 3`);
 });
 
@@ -90,7 +90,7 @@ await check("legal/{privacy-policy,terms,support}.md present", async () => {
 let failed = 0;
 for (const r of results) {
   const sigil = r.ok ? "PASS" : "FAIL";
-  // eslint-disable-next-line no-console
+   
   console.log(`${sigil}  ${r.name}${r.detail ? " — " + r.detail : ""}`);
   if (!r.ok) failed++;
 }
@@ -99,5 +99,5 @@ if (failed > 0) {
   console.error(`\n${failed} check(s) failed.`);
   process.exit(1);
 }
-// eslint-disable-next-line no-console
+ 
 console.log(`\nAll ${results.length} checks passed.`);

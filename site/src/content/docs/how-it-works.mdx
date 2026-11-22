@@ -1,0 +1,69 @@
+---
+title: How it works
+description: The three tools, the sandbox that runs your assistant's code, and how the server stays polite to ClinicalTrials.gov.
+---
+
+import Example from '../../components/Example.astro';
+import FlowDiagram from '../../components/FlowDiagram.astro';
+
+The server gives your assistant a small JavaScript SDK in place of dozens of narrow tools. The
+assistant writes the exact query it needs, and the server runs that code in a sandbox.
+
+<FlowDiagram />
+
+## Three tools
+
+The assistant uses them in this order.
+
+| Tool | What it does |
+| --- | --- |
+| `search_api` | Searches the SDK method documentation and a dictionary of response fields. Returns signatures and ready-to-run examples. |
+| `describe_schema` | Looks up one entry, such as `ctgov.studies.search`, or lists a namespace, such as `ctgov.stats.`. |
+| `execute` | Runs JavaScript in the sandbox, with `ctgov` as a global. |
+
+All three are read-only. [Tools](/reference/tools/) has their inputs and limits.
+
+## What the assistant writes
+
+For "Which sponsors run the most recruiting Phase 3 cancer trials with at least 200 sites?", the
+assistant can run a program like this one:
+
+<Example file="phase3-oncology-by-sponsor.js" />
+
+It then answers in plain English, and names the sponsors and studies that it found.
+
+## Reading every page
+
+A search returns one page of studies and, when more remain, a `nextPageToken`. The SDK has no
+helper that follows it. The program passes the same parameters with `pageToken` set to the previous
+page's token, and stops when the token is missing. Each page is one call, so the program sets a
+page limit. The program above does this, and so does the
+[paging recipe](/recipes/#reading-every-page).
+
+## The sandbox
+
+- The program has no network, file system, environment, or subprocess access.
+- The only way out is the `ctgov` SDK. Each call goes to the server process, which calls
+  ClinicalTrials.gov.
+- Each run has a time limit, 15 seconds by default and 60 at most, a memory limit, 64 MB by default
+  and 256 at most, and size limits for code, results, and logs.
+- The memory limit is the V8 heap. In the separate Deno process, which the hosted server always
+  uses, the process is also ended when its total memory grows by more than twice the limit plus 96
+  MiB, 224 MiB at the default. That covers buffers, which the heap limit does not count.
+
+[Security](/security/) has more.
+
+## ClinicalTrials.gov's limits
+
+ClinicalTrials.gov publishes no rate limit, so the server assumes a modest one and keeps to it for
+everyone who uses the server. So the server:
+
+- Starts at most 10 requests each second, with 8 in flight. A call waits its turn for up to 15
+  seconds.
+- Pauses every call when ClinicalTrials.gov answers `429`, for as long as it asks, and retries
+  that call once if the pause is 30 seconds or less.
+- Caps the calls in one `execute` run, by default at 100.
+- Caches responses, for 5 minutes by default, so a repeated question does not send a new request.
+
+A program can start up to 100 calls at once with `Promise.all`, but they still leave at the rate
+above. The hosted server also limits each account. See [Limits](/keys/#limits).

@@ -1,17 +1,13 @@
-export { startStdioServer, type StartOptions as StdioStartOptions } from "./server/stdio.js";
-export { startHttpServer, type HttpServerOptions } from "./server/http.js";
-export { buildMcpServer, type BuildMcpServerOptions } from "./server/mcpServer.js";
+export { startStdioServer, type StdioStartOptions } from "./server/stdio.js";
+export { startHttpServer, type HttpServerOptions, type HttpHandle } from "./server/http.js";
+export { buildMcpServer, MCP_PROTOCOL_VERSION, SERVER_VERSION } from "./server/mcpServer.js";
+export type { CatalogDeps } from "./server/toolCatalog.js";
+export { buildSupervisor, type SupervisorConfig } from "./supervisor/index.js";
 export {
-  selectSandbox,
-  type SandboxMode,
-  type SandboxExecuteOptions,
-  type SandboxExecutor,
-  type SandboxResult,
+  pickSandbox,
+  type SandboxKind,
+  type SandboxRunner,
+  type ExecuteOptions,
+  type ExecuteResult,
 } from "./sandbox/index.js";
-export { EmbeddedAs, type EmbeddedAsOptions } from "./auth/embeddedAs.js";
-export {
-  buildAuthAdapter,
-  loadAuthConfig,
-  type AuthConfig,
-  type AuthProvider,
-} from "./auth/config.js";
+export { AUTH_PROVIDERS, DEFAULT_SCOPE, type AuthConfig, type AuthProvider } from "./server/authz.js";

@@ -1,84 +1,59 @@
 # Changelog
 
-All notable changes will be documented here. Versioning follows
-[Semantic Versioning](https://semver.org/).
+All notable changes to this project are documented here. Releases are cut automatically
+from `main` (see CONTRIBUTING.md, "Releasing").
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-21
+
+First release. Nothing was published before it; the development line was `0.1.0-alpha.0`.
+The changes from that line are listed in [`docs/migration-0.1.md`](./docs/migration-0.1.md).
+
 ### Added
 
-- **MCP tool annotations** on every tool (`title`, `readOnlyHint: true`,
-  `destructiveHint: false`, `idempotentHint: true`, `openWorldHint`) so the
-  catalog matches Anthropic's connector review criteria. Tool descriptions
-  now also reference the upstream ClinicalTrials.gov v2 API documentation.
-- **IP rate limiter**: per-IP token-bucket (`src/server/ipRateLimiter.ts`)
-  applied to `/mcp` and `/as/*` before auth runs. Caps unauthenticated
-  flood traffic at 5 rps / 20 burst per IP by default (tunable via
-  `CTGOV_IP_RPS` / `CTGOV_IP_BURST`). Returns 429 with `Retry-After`.
-- **`CTGOV_TRUST_PROXY`** env var. Set to `1` when behind a known reverse
-  proxy (Railway, Cloudflare, ALB) so the limiter reads the first
-  `x-forwarded-for` hop.
-- **Railway deploy guide** in `README.md` as an alternative to the AWS
-  Terraform module. Reuses `deploy/Dockerfile` unchanged.
+- Code-mode MCP server for ClinicalTrials.gov (`ctgov.*`: study search and records, study
+  metadata, search areas, enumerations, field statistics and the API version), with three
+  tools (`search_api`, `describe_schema`, `execute`), stdio and stateless Streamable HTTP
+  (MCP `2026-07-28`, with a legacy fallback) transports. No API key is needed.
+- Sandboxed execution: isolated-vm 7 (prebuilt for Node 24/26) for single-user use, and a
+  Deno runner (a permissionless supervisor process running user code in a stripped Worker,
+  with token-authenticated frames) which is the only runner for authenticated HTTP serving.
+  Host-owned deadlines, process-group cleanup, a V8 heap limit and a resident-memory limit,
+  byte budgets enforced inside and outside the sandbox, execution caps, per-execute call
+  budgets, and cancellation on client disconnect.
+- Tool results as compact JSON plus `structuredContent` and `outputSchema`; failed
+  executions return `isError` with the full `{ok, value, logs, error, durationMs}` envelope;
+  SDK errors keep their HTTP status.
+- ClinicalTrials.gov-aware HTTP client: a shared process-wide gate (10 requests per second,
+  `CTGOV_RATE_PER_SEC`), retries with backoff, `Retry-After` pauses on `429`, response
+  caching, bounded gzip and an 8 MiB response cap.
+- Personal accounts (hosted mode, `CTGOV_AUTH_PROVIDER=accounts`): Google sign-in and
+  OAuth/PKCE for `/mcp/account`, keyless, with per-account hourly and daily quotas. The
+  anonymous `/mcp` endpoint offers the documentation tools only.
+- `--public-docs`: anonymous, database-free, docs-only hosting (`search_api` and
+  `describe_schema`), the Docker image's default.
+- Fail-closed HTTP security: authentication required unless `--insecure` (which binds to
+  loopback), OIDC issuer/audience/expiry/subject/scope checks with asymmetric algorithms
+  only, configured-Host validation, Origin checks on the anonymous endpoint, and a 1 MiB
+  request cap. `GET /health` for platform health checks.
+- Documentation site (`site/`, served at `/docs`), a corpus with runnable examples, a
+  generated SDK reference and paste-ready programs in `examples/`.
+- Docker image (Node 26 and Deno), an MCPB bundle (manifest v0.4, no configuration to fill
+  in) and third-party license notices in every artifact.
+- Continuous release pipeline: gates, then a tagged GitHub Release with the npm tarball and
+  the Claude Desktop bundle, then an npm publish with provenance.
 
 ### Changed
 
-- **OAuth well-known endpoints are 404 in unauthenticated mode**
-  (`--insecure` / `provider=none`). Previously they always returned a PRM
-  document referencing an authorization server that did not exist, which
-  broke MCP clients probing the metadata. Auth-enabled deployments still
-  serve PRM (RFC 9728) and AS metadata (RFC 8414) at the conventional paths.
-- **Privacy policy** rewritten to match the public Railway no-auth posture
-  (no OAuth identity collected on the public listing). The auth-on
-  self-hosted path is documented as a separate section so operators have an
-  accurate reference.
-- **Submission packet** (`legal/submission-packet.md`) refreshed as a
-  narrative pitch with the connector's code-mode novelty, five worked
-  examples, and an explicit map to every Anthropic review criterion.
+- Licensed under Apache-2.0 (was MIT); the copyright holder is BLEN, Inc. and the
+  repository carries a `NOTICE`.
+- The `execute` result is `{ok, value, logs, error?, durationMs}` (was `{ok, result, ...}`)
+  and a failed execution sets `isError`.
+- The authorization scope is `ctgov:read` (was `ctgov.read`).
+- `ctgov.studies.searchAll` is removed: loop on `nextPageToken` with `pageToken`.
+- The embedded authorization server and HTTP sessions are removed; the transport is stateless.
+- Node 24 or 26 is required (was Node 20.10 and later).
 
-### Fixed
-
-- **Hostname / repo URL drift**: every reference to the singular
-  `clinicaltrial.mcp.blencorp.com` host and `blencorp/clinicaltrial-mcp-server`
-  repo path now matches the deployed plural form
-  (`clinicaltrials.mcp.blencorp.com`,
-  `https://github.com/blencorp/clinicaltrials-mcp-server`). The npm package
-  name stays `@blen/clinicaltrial-mcp-server` for publish stability.
-
-## 0.1.0-alpha.0 — 2026-04-14
-
-Initial alpha, tracked on `claude/plan-clinicaltrial-mcp-rdxY1`.
-
-### Added
-
-- **Core**: `@blen/clinicaltrial-mcp-server` package (Node 20+, TypeScript strict).
-- **Tools**: `search_api` (BM25 over endpoints + study-field dictionary),
-  `describe_schema` (path/prefix lookup), `execute` (sandboxed TS body).
-- **Supervisor**: undici-backed HTTP client with token-bucket rate limit,
-  LRU cache, zod validation, exponential-backoff retry, stale-cache
-  fallback on upstream failure, structured audit trace.
-- **Sandbox**: `isolated-vm` primary executor + Deno subprocess fallback,
-  AST allow-list (acorn) with blocked identifiers, 15 s wall clock and
-  64 MB heap default caps.
-- **Transports**: stdio (local) and MCP Streamable HTTP (remote, with
-  per-session stateful transports and an idle sweeper).
-- **OAuth**: RFC 9728 PRM, RFC 8414 AS metadata (cached proxy), RFC 7591
-  DCR-ready metadata, PKCE/audience binding via `jose`.
-- **Providers**: Clerk, WorkOS, Auth0, generic OIDC, and an **embedded
-  Authorization Server** (RFC 7591 DCR + authorization_code + PKCE S256 +
-  RS256 JWT issuance + JWKS + refresh-token rotation) for self-hosters.
-- **Quotas**: per-subject execute + upstream rate limits stacked under the
-  global 10 rps bucket.
-- **Deploy**: Docker image (multi-stage, non-root, tini), Terraform module
-  for AWS ECS Fargate + ALB + ACM + Route 53 + Secrets Manager +
-  CloudWatch Logs + WAFv2, GitHub Actions OIDC deployer.
-- **Compliance**: submission packet, `pnpm check:directory` verifier.
-- **Examples**: five worked prompts in `examples/`.
-- **CI**: lint + typecheck + test + build + docker image CI, scheduled
-  schema-drift check with auto-issue creation.
-- **Docs**: README, ARCHITECTURE, CHANGELOG, CONTRIBUTING, SECURITY,
-  CODE_OF_CONDUCT, privacy/terms/support/submission-packet.
-- **Tests**: 55+ unit + integration tests (rate limiter, cache, AST
-  policy, BM25 ranker, corpus, HTTP client with MockAgent, fault
-  injection, Clerk adapter with signed JWTs, embedded AS e2e, HTTP
-  transport secure + insecure modes, sandbox chaos, Deno fallback smoke).
+[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/blencorp/clinicaltrials-mcp-server/releases/tag/v0.1.0

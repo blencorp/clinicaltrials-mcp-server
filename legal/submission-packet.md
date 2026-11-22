@@ -53,7 +53,7 @@ The payoff is concrete:
 | **Privacy policy** | [`legal/privacy-policy.md`](./privacy-policy.md) |
 | **Terms** | [`legal/terms.md`](./terms.md) |
 | **Support** | <opensource@blencorp.com> · SLOs in [`legal/support.md`](./support.md) |
-| **License** | MIT |
+| **License** | Apache-2.0 |
 | **Publisher** | BLEN, Inc — digital services firm specializing in ML/AI, modernization, and human-centered design |
 
 > Unaffiliated with NIH, NLM, or ClinicalTrials.gov. Data is retrieved live from the
@@ -85,7 +85,6 @@ Look up study-data fields by exact dotted path (e.g. `protocolSection.eligibilit
 Runs an async TypeScript body against a typed `ctgov.*` SDK inside a V8 isolate. The SDK surface:
 ```ts
 ctgov.studies.search(params)        // GET /studies
-ctgov.studies.searchAll(params, o?) // async iterator over pages
 ctgov.studies.get(nctId, params?)   // GET /studies/{nctId}
 ctgov.studies.metadata(params?)
 ctgov.studies.searchAreas()
@@ -98,15 +97,17 @@ ctgov.version()
 
 ## Worked examples
 
-Five end-to-end examples ship in [`examples/`](../examples/):
+Six runnable programs ship in [`examples/`](../examples/) (each is pasteable into `execute`):
 
-1. **Phase 3 oncology by sponsor** — competitive landscape across active Phase 3 cancer trials.
-2. **Recruiting trials near a geo point** — patient-facing search by lat/lng, radius, and condition.
-3. **Eligibility digest for a single study** — readable summary of inclusion/exclusion criteria.
-4. **5-year diabetes registration trend** — time-series aggregation with a single `execute` call.
-5. **Site-contact dossier** — per-trial site/contact dump for clinician referrals.
+1. **Phase 3 oncology by sponsor**: competitive landscape across recruiting Phase 3 cancer trials, paged with `pageToken`.
+2. **Recruiting trials near a geo point**: patient-facing search by lat/lng, radius, and condition, with the nearest site computed in the sandbox.
+3. **Eligibility digest for a single study**: readable inclusion/exclusion lists.
+4. **Registration trend**: yearly counts by status from a paged search of 200-study pages.
+5. **Site-contact dossier**: per-trial site and contact report for clinician referrals.
+6. **Paging recipe**: the bounded `pageToken` loop (`searchAll` does not exist).
 
-Every example runs against the live API in under 5 seconds.
+Run against the live API they take well under a second to a few seconds each; the 25- and 50-page
+loops (examples 1 and 4) are the slowest, about 2 and 5 seconds.
 
 ## Authentication & test access
 
@@ -143,7 +144,7 @@ The `execute` tool is the differentiator and it is hardened end-to-end:
 
 ## Engineering signals
 
-- **Test coverage** — ~60 tests across unit, integration (`nock`/MockAgent), live-API (`CTGOV_LIVE=1`), sandbox chaos, and end-to-end OAuth/embedded-AS flows. CI runs lint, typecheck, tests, build, CLI smoke, and Docker image build on every PR.
+- **Test coverage** — ~60 tests across unit, integration (undici MockAgent), live-API (`CTGOV_LIVE=1`), sandbox chaos, and end-to-end OAuth/embedded-AS flows. CI runs lint, typecheck, tests, build, CLI smoke, and Docker image build on every PR.
 - **Schema drift guard** — a weekly GitHub Actions job re-runs `pnpm verify:schema` against upstream and auto-files an issue if the pinned OpenAPI diverges.
 - **Submission self-check** — `pnpm check:directory <URL>` runs the directory compliance checklist (HTTPS, health endpoint, ≥3 working examples, legal docs present) against any deployment.
 - **Distribution** — published to npm as `@blen/clinicaltrial-mcp-server` (stdio for Claude Desktop), packaged as an `.mcpb` cross-platform desktop extension, and deployable via Railway one-click or Terraform AWS module (ECS Fargate + ALB + ACM + WAFv2).
@@ -167,10 +168,10 @@ The `execute` tool is the differentiator and it is hardened end-to-end:
 - [x] **First-party API** — calls only ClinicalTrials.gov v2; no proxied third parties.
 - [x] **No financial transfers, no AI-generated media**.
 - [x] **HTTPS** — TLS 1.2/1.3 via Railway edge.
-- [x] **Health endpoints** — `/health`, `/healthz`, `/readyz` all return 200.
-- [x] **≥ 3 working examples** — five shipped in [`examples/`](../examples/).
+- [x] **Health endpoints** — `/health` returns 200.
+- [x] **≥ 3 working examples** — six shipped in [`examples/`](../examples/).
 - [x] **Privacy policy, terms, support docs** — all in [`legal/`](./).
-- [x] **Public source code** — MIT-licensed on GitHub.
+- [x] **Public source code** — Apache-2.0-licensed on GitHub.
 - [x] **MCP Inspector tested** — every tool exercised end-to-end before each release.
 
 ## Launch readiness

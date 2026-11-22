@@ -1,17 +1,23 @@
 ---
 name: Feature request
-about: Propose a new feature or SDK surface
+about: Propose a new tool, SDK method, or capability
 labels: enhancement
 ---
 
-**Problem**
+## What problem does this solve?
 
-<!-- What's the pain point? What are you trying to do that's hard today? -->
+<!-- A paragraph on the use case and who it's for. -->
 
-**Proposal**
+## Proposed change
 
-<!-- How would you like it to work? Pseudocode / API sketch welcome. -->
+<!-- Sketch the API. New SDK method? Tool argument? Configuration knob? -->
 
-**Alternatives considered**
+## Alternatives considered
 
-<!-- Anything else you've tried or that you think would work. -->
+<!-- What else did you weigh? Why is this the right shape? -->
+
+## Out of scope
+
+Anything that weakens the sandbox boundary (adding `fetch`, `import`,
+filesystem, env, or subprocess access to the `execute` surface) is out of
+scope per [CONTRIBUTING.md](../../CONTRIBUTING.md).

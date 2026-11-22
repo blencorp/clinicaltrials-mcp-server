@@ -5,8 +5,8 @@
     "dockerfilePath": "deploy/Dockerfile"
   },
   "deploy": {
-    "startCommand": "node dist/bin.js --http --sandbox auto --insecure",
-    "healthcheckPath": "/healthz",
+    "startCommand": "node dist/bin.js --http --public-docs",
+    "healthcheckPath": "/health",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5

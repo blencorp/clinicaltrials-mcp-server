@@ -1,0 +1,66 @@
+---
+title: Tools
+description: Inputs, results, and limits of search_api, describe_schema, and execute.
+---
+
+The server has three tools. All three are read-only. Each result is compact JSON text, with the
+same object as structured content.
+
+## search_api
+
+Searches the SDK method documentation and the response-field dictionary.
+
+| Input | Type | Notes |
+| --- | --- | --- |
+| `query` | string | What you want to do, in plain words. |
+| `k` | integer, 1 to 50 | The number of results. The default is 10. |
+
+It returns `{ hits, note }`. Each hit has an `id`, a `description`, and a `score`. A hit for a
+method also has its `signature` and a ready-to-run `example`.
+
+## describe_schema
+
+Looks up entries by name. Give exactly one of the two inputs.
+
+| Input | Type | Notes |
+| --- | --- | --- |
+| `path` | string | One exact entry, for example `ctgov.studies.search`. |
+| `prefix` | string | Every entry in a namespace, for example `ctgov.stats.`. |
+
+It returns `{ found: true, entries }`, or `{ found: false, message }` when nothing matches.
+
+## execute
+
+Runs JavaScript in the sandbox, with `ctgov` as a global.
+
+| Input | Type | Notes |
+| --- | --- | --- |
+| `code` | string | Plain JavaScript. Type annotations are rejected. Top-level `await` and `return` work. |
+| `timeoutMs` | integer, 100 to 60,000 | The time limit of the run. The default is 15,000. |
+| `memoryMb` | integer, 16 to 256 | The memory limit of the run. The default is 64. |
+
+A run that succeeds returns `{ ok: true, value, logs, durationMs }`, where `value` is what the
+program returned.
+
+A run that fails returns `{ ok: false, error: { name, message, status? }, logs, durationMs }` and
+is marked as an error, so the assistant sees what went wrong. The
+[SDK reference](/reference/sdk/#errors) lists the error names.
+
+On the anonymous hosted URL, `execute` is not registered, and a call to it is answered as an
+unknown tool.
+
+### Limits of one run
+
+| What | Default limit | Past the limit |
+| --- | --- | --- |
+| Code | 256 KiB | The call is refused, with an argument error or `CodeTooLarge`. |
+| Returned value | 256 KiB | `ResultTooLarge` |
+| Logs | 64 KiB or 1,000 lines | No error. The logs are cut. |
+| Arguments of one SDK call | 64 KiB | `ArgumentsTooLarge` |
+| SDK calls pending at once | 100 | `TooManyPendingCalls` |
+| ClinicalTrials.gov calls | 100 | `CallBudgetExceeded` |
+| One ClinicalTrials.gov response | 8 MiB | `ResponseTooLarge` |
+| Memory | 64 MB, set by `memoryMb`. In the Deno process, also twice `memoryMb` plus 96 MiB of growth | `MemoryLimitExceeded` |
+
+A self-hosted server can change the call budget and the pace of requests. See
+[every setting](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/README.md#configuration).

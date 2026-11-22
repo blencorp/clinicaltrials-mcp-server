@@ -1,0 +1,267 @@
+[
+  {
+    "name": "search_api",
+    "title": "Search ClinicalTrials.gov API surface",
+    "description": "BM25 search over the ClinicalTrials.gov SDK methods (ctgov.studies.*, ctgov.stats.*, ctgov.version) and the curated study-field dictionary. Returns method signatures and runnable JavaScript examples for use in `execute`. Use it before writing code: the SDK takes flat dotted keys (\"query.cond\", \"filter.overallStatus\"), not nested objects.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-text query over the ClinicalTrials.gov SDK methods and field documentation (ctgov.*) (for example: recruiting studies by condition)."
+        },
+        "k": {
+          "default": 10,
+          "description": "Max number of results to return",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "endpoint",
+                  "field"
+                ]
+              },
+              "binding": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              },
+              "example": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "binding",
+              "description"
+            ]
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hits",
+        "note"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "describe_schema",
+    "title": "Describe ClinicalTrials.gov SDK and study fields",
+    "description": "Look up an SDK method, query-syntax note or study field by exact dotted id (`path`, e.g. \"ctgov.studies.search\", \"ctgov.syntax.paging\", \"ctgov.fields.protocolSection.statusModule.overallStatus\") or by namespace `prefix` (e.g. \"ctgov.studies\", \"ctgov.fields.protocolSection.designModule\"); exactly one of them. Field reference: https://clinicaltrials.gov/data-api/about-api/study-data-structure.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Exact dotted id, e.g. 'ctgov.studies.search' or 'ctgov.fields.protocolSection.statusModule.overallStatus'",
+          "type": "string"
+        },
+        "prefix": {
+          "description": "Prefix to enumerate, e.g. 'ctgov.studies' or 'ctgov.fields.protocolSection.statusModule'",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "path"
+          ],
+          "not": {
+            "required": [
+              "prefix"
+            ]
+          }
+        },
+        {
+          "required": [
+            "prefix"
+          ],
+          "not": {
+            "required": [
+              "path"
+            ]
+          }
+        }
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "found": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "endpoint",
+                  "field"
+                ]
+              },
+              "binding": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              },
+              "example": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "binding",
+              "description"
+            ]
+          }
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "found"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "execute",
+    "title": "Execute sandboxed ClinicalTrials.gov query",
+    "description": "Run JavaScript inside a sandbox (no net, fs, env, or subprocess) against the `ctgov` SDK for the public ClinicalTrials.gov v2 API (https://clinicaltrials.gov/data-api/api). Plain JS only: TypeScript type annotations are rejected. Top-level await is allowed; `return` the value you want as the result (at most 256 KiB, so pass `fields` to studies.search and return only what you need). To read several pages, loop on `nextPageToken` with `pageToken`; there is no searchAll helper. Read-only: GET endpoints only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144,
+          "description": "JavaScript to run inside the sandbox (plain JS: TypeScript type annotations are rejected; top-level await/return are allowed). The SDK global is `ctgov` (ClinicalTrials.gov: ctgov.studies.*, ctgov.stats.*, ctgov.version()); `return` a JSON-serializable value of at most 256 KiB."
+        },
+        "timeoutMs": {
+          "default": 15000,
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "memoryMb": {
+          "default": 64,
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 256
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "description": "false when the code threw, timed out, or broke a limit; see error"
+        },
+        "value": {
+          "description": "The JSON value the code returned"
+        },
+        "logs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "status": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "name",
+            "message"
+          ]
+        },
+        "durationMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "ok",
+        "logs",
+        "durationMs"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  }
+]

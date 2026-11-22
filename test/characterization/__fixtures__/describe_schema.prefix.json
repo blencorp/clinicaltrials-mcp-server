@@ -1,0 +1,29 @@
+{
+  "found": true,
+  "entries": [
+    {
+      "id": "ctgov.fields.protocolSection.statusModule.overallStatus",
+      "kind": "field",
+      "binding": "ctgov",
+      "description": "Overall status: RECRUITING, COMPLETED, TERMINATED, etc. (enum)"
+    },
+    {
+      "id": "ctgov.fields.protocolSection.statusModule.startDateStruct.date",
+      "kind": "field",
+      "binding": "ctgov",
+      "description": "Actual or anticipated start date. (date)"
+    },
+    {
+      "id": "ctgov.fields.protocolSection.statusModule.primaryCompletionDateStruct.date",
+      "kind": "field",
+      "binding": "ctgov",
+      "description": "Primary completion date. (date)"
+    },
+    {
+      "id": "ctgov.fields.protocolSection.statusModule.completionDateStruct.date",
+      "kind": "field",
+      "binding": "ctgov",
+      "description": "Study completion date. (date)"
+    }
+  ]
+}

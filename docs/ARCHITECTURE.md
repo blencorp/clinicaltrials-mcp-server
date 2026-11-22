@@ -3,94 +3,89 @@
 `@blen/clinicaltrial-mcp-server` is a code-mode MCP server that exposes the public
 ClinicalTrials.gov v2 API through three tools (`search_api`,
 `describe_schema`, `execute`) rather than one-tool-per-endpoint. The model
-writes a short TypeScript body, we run it in a sandbox, and the sandbox's
+writes a short JavaScript body, we run it in a sandbox, and the sandbox's
 only outbound path is a supervisor-backed `ctgov.*` SDK.
 
 ```mermaid
 flowchart TD
     subgraph TransportLayer["Transport layer"]
         direction LR
-        Stdio["stdio (local / Claude Desktop)<br/>StdioServerTransport<br/><i>no auth</i>"]
-        Http["Streamable HTTP (hosted)<br/>StreamableHTTPServerTransport<br/>+ Clerk / WorkOS / Auth0<br/>+ embedded AS (self-host)"]
+        Stdio["stdio (local / Claude Desktop)<br/>serveStdio<br/><i>no auth</i>"]
+        Http["Streamable HTTP (hosted)<br/>createMcpHandler (stateless)<br/>+ OIDC bearer verification (Clerk / WorkOS / Auth0)"]
     end
 
-    Server["<b>buildMcpServer(opts)</b><br/>tools: search_api, describe_schema, execute"]
-    Quota["SubjectQuota<br/>(per-sub + global 10 rps)"]
+    Server["<b>buildMcpServer(deps, requestCtx)</b><br/>tools: search_api, describe_schema, execute"]
 
-    subgraph SupervisorBox["Supervisor"]
-        HttpClient["HttpClient<br/>undici + LRU + retries<br/>+ zod validation + audit trace"]
+    subgraph SupervisorBox["Supervisor (built once per process)"]
+        Limits["ExecutionLimiter (8 / 2 per caller)<br/>per-execute call budget, hourly SubjectQuota"]
+        HttpClient["HttpClient<br/>undici + LRU (byte cap) + retry<br/>size cap, gunzip bound, abort"]
+        Gate["UpstreamGate (process-wide)<br/>10 rps, 8 in flight"]
     end
 
     CTGov[("ClinicalTrials.gov v2")]
 
     subgraph SandboxBox["Sandbox"]
-        Isolate["isolated-vm (primary)<br/>deno subprocess (fallback)<br/>AST allow-list (acorn)"]
+        Isolate["isolated-vm (stdio, --insecure)<br/>Deno process (authenticated HTTP)<br/>acorn preflight, byte budgets, deadline"]
     end
 
-    Shim["ctgov.* SDK shim (bindings.ts)<br/>calls __host.rpc(method, args)"]
+    Methods["sources/ctgov.ts<br/>frozen methods table<br/>(plain-data RPC, zod validation)"]
 
     Stdio --> Server
     Http --> Server
-    Server --> Quota
-    Quota --> HttpClient
-    HttpClient --> CTGov
-    Server -.dispatches execute.-> Isolate
-    Isolate -->|RPC only| Shim
-    Shim --> HttpClient
+    Server --> Limits
+    Limits -.runs.-> Isolate
+    Isolate -->|"RPC: binding, path, args"| Methods
+    Methods --> HttpClient
+    HttpClient --> Gate
+    Gate --> CTGov
 ```
 
 ## Data flow (single `execute` call)
 
-1. **MCP tools/call** reaches the server transport.
-2. `buildMcpServer` routes to `runExecute` with the validated body.
-3. `SubjectQuota.tryConsumeExecute(sub)` enforces per-subject rate.
-4. `validateUserCode` (acorn AST pass) rejects blocked identifiers before a
-   sandbox even spins up.
-5. The selected `SandboxExecutor` runs the code inside an isolate (or Deno
-   subprocess). The sandbox has exactly one capability: `ctgov.*` via RPC.
-6. Every `ctgov.*` call crosses the RPC bridge, hits `buildRpcDispatch` in
-   the host, flows into `CtGovRuntime` which validates args with zod, and
-   finally reaches `HttpClient` which applies:
-   - subject-aware rate limiting (`acquireFn` hook),
-   - LRU cache lookup,
-   - retry with exponential backoff + jitter on 408/425/429/5xx,
-   - stale-cache fallback when upstream fails after retries exhaust,
-   - audit recording.
-7. Result returns to the sandbox, optionally logged via the bridged
-   `console.*`, and the final return value is serialized and returned to the
-   client as the tool result.
+1. **MCP tools/call** reaches the server transport. The HTTP transport builds a thin MCP server per
+   request on top of the supervisor's shared dependencies, so the cache, the gate and the limiters
+   outlive requests.
+2. `execute` asks the `ExecutionLimiter` for a slot (the token's subject, or the client address on
+   `--insecure`) and answers `Busy` over a cap. It creates one `AbortController` that combines the
+   MCP request's signal, server shutdown and the end of the execution.
+3. The runner parses the code twice (as a script wrapper and as a module) and rejects banned names or a
+   closed wrapper; then runs it with a host-owned deadline, memory limit and byte budgets (result, logs,
+   SDK arguments, pending calls).
+4. Every `ctgov.*` call crosses the bridge as `{binding, path, args}`. The per-execute call budget and
+   the subject's hourly quota are charged, then `dispatch` resolves `path` as an own data property of
+   the frozen methods table. The method validates its arguments with zod and calls `HttpClient`, with
+   the execution's signal carried by `AsyncLocalStorage`.
+5. `HttpClient` serves from the LRU cache or joins an identical request in flight, otherwise waits for
+   a gate slot, sends the request under an absolute deadline, reads the body under a size cap
+   (bounded gunzip), and retries 5xx and network errors with backoff and a 429 once after the shared
+   pause. Every wait and the request itself stop when the signal aborts.
+6. The result returns as `{ok, value, logs, error?, durationMs}`; an SDK error keeps its name, message
+   and status. A sandbox process that has not exited yet keeps its execution slot until it has.
 
 ## Security boundaries
 
 | Boundary | Enforcement |
 |---|---|
-| User code → host | V8 isolate (or Deno `--allow-none` subprocess), no net/fs/env/ffi |
-| User code → direct escape hatches | acorn AST preflight rejects imports, eval, host-bridge access, and unsafe prototype/property chains before execution |
-| Incoming HTTP | OAuth 2.1 PKCE + audience-bound JWT, RFC 9728 PRM, optional WAFv2 allow-list |
-| Pre-auth flood control | `IpRateLimiter` — per-IP token bucket on `/mcp` + `/as/*` (5 rps / 20 burst default), runs before JWT verification |
-| Per-subject fair use | SubjectQuota (60 execute/min, 600 upstream/min) |
-| Global upstream fair use | 10 rps token bucket (CT.gov documented limit) |
-| Upstream credential leakage | Credentials live only in the supervisor's HttpClient; the sandbox never sees them |
+| User code to host | isolated-vm isolate (stdio, `--insecure`) or a Deno child process with no permissions (authenticated HTTP): no net/fs/env/ffi, `--disallow-code-generation-from-strings`, module Worker with a global allowlist, RSS watchdog, process-group kill, minimal environment, stderr never shown |
+| User code to escape hatches | dual-parse acorn preflight rejects imports, `eval`, `Function`, `globalThis`, `Deno`, `fetch`, `constructor`, `__proto__`, string-keyed forms of them and a closed wrapper; the SDK is plain-data RPC over a frozen methods table |
+| Sandbox to host | token-prefixed frames the user code cannot forge, size-bounded and validated; result, log and argument budgets enforced in the sandbox and again on the host; the execution settles once |
+| Incoming HTTP | Audience-bound, asymmetric, scope-checked JWT on every request (no sessions), RFC 9728 PRM, Host validation (421), Origin validation on the anonymous endpoint, 1 MiB body cap (also in the Node adapter), optional WAFv2 allow-list |
+| Pre-auth flood control | `IpRateLimiter`: per-IP token bucket on `/mcp` and the OAuth metadata (5 rps / 20 burst default, client address from `CTGOV_CLIENT_IP_HEADER`), runs before JWT verification |
+| Execution fair use | `ExecutionLimiter` (8 simultaneous, 2 per caller), per-execute call budget (100), hourly per-subject upstream quota (3000, authenticated only) |
+| Global upstream fair use | one process-wide `UpstreamGate`: 10 rps (`CTGOV_RATE_PER_SEC`), 8 in flight; a 429 pauses every caller |
 
 ## Auth providers
 
-All providers reduce to the same `AuthAdapter` interface
-(`verifyAccessToken`, `getUpstreamCredential`):
-
-| Provider | Notes |
-|---|---|
-| `clerk` | Default for hosted. DCR + PKCE + JWKS. |
-| `workos` | Via `WorkOsAuthAdapter` (OIDC, same shape). |
-| `auth0` | Via `Auth0AuthAdapter` (OIDC, same shape). |
-| `generic-oidc` | Any OIDC IdP with a standard JWKS. |
-| `embedded` | Built-in AS (RFC 7591 DCR, auth code + PKCE, RS256 JWTs). |
-| `none` | No auth (local/stdio only). |
+`clerk`, `workos`, `auth0` and `generic-oidc` all verify bearer tokens the same way
+(`OidcVerifier` in `src/server/authz.ts`): issuer, audience, `exp` and `sub` required, asymmetric
+algorithms only, every configured scope present, keys from an `https` JWKS. `none` is for stdio,
+`--public-docs` and `--insecure` only. There is no embedded authorization server.
 
 ## OAuth metadata
 
 - `/.well-known/oauth-protected-resource` — RFC 9728 PRM advertising our
   `resource`, the trusted AS, and supported scopes.
-- `/.well-known/oauth-authorization-server` — RFC 8414 AS metadata, either
-  cached from the upstream issuer or served directly by the embedded AS.
-- `WWW-Authenticate: Bearer realm="…", resource_metadata="…"` on every 401
+- The authorization server's own metadata is read by clients from the issuer
+  named in the PRM; this server does not proxy it.
+- `WWW-Authenticate: Bearer resource_metadata="…"` on every 401
   so clients can discover the AS via the PRM.

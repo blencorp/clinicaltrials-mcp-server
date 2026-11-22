@@ -1,26 +1,20 @@
-import { z } from "zod";
-import { buildCorpus, type FieldDoc } from "../search/corpus.js";
+import { z } from 'zod';
+import { lookupByPathOrPrefix, type CorpusEntry } from '../search/corpus.js';
 
 export const DescribeSchemaInput = z.object({
-  path: z.string().optional(),
-  prefix: z.string().optional(),
-});
+  path: z.string().optional().describe("Exact dotted id, e.g. 'ctgov.studies.search' or 'ctgov.fields.protocolSection.statusModule.overallStatus'"),
+  prefix: z.string().optional().describe("Prefix to enumerate, e.g. 'ctgov.studies' or 'ctgov.fields.protocolSection.statusModule'"),
+}).refine(v => Boolean(v.path) !== Boolean(v.prefix), { message: 'Provide exactly one of `path` or `prefix`' });
+export type DescribeSchemaInputT = z.infer<typeof DescribeSchemaInput>;
 
-export interface DescribeSchemaResult {
-  matches: FieldDoc[];
-  total: number;
-}
+export type DescribeSchemaResult =
+  | { found: false; message: string }
+  | { found: true; entries: Array<{ id: string; kind: 'endpoint' | 'field'; binding: string; description: string; signature?: string; example?: string }> };
 
-export function runDescribeSchema(
-  input: z.infer<typeof DescribeSchemaInput>,
-): DescribeSchemaResult {
-  const { fields } = buildCorpus();
-  let matches = fields;
-  if (input.path) {
-    matches = matches.filter((f) => f.path === input.path);
-  } else if (input.prefix) {
-    const pre = input.prefix;
-    matches = matches.filter((f) => f.path.startsWith(pre));
+export function describeSchema(input: DescribeSchemaInputT, entries: Map<string, CorpusEntry>): DescribeSchemaResult {
+  const hits = lookupByPathOrPrefix(entries, input);
+  if (hits.length === 0) {
+    return { found: false, message: `No entries matched ${input.path ? `path '${input.path}'` : `prefix '${input.prefix}'`}.` };
   }
-  return { matches, total: matches.length };
+  return { found: true, entries: hits.map(e => ({ id: e.id, kind: e.kind, binding: e.binding, description: e.description, signature: e.signature, example: e.example })) };
 }
