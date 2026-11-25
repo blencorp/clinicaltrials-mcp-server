@@ -232,6 +232,10 @@ self-hosted operators are responsible for their own policies.
 - The [Model Context Protocol](https://modelcontextprotocol.io) team for the spec and TypeScript SDK.
 - Cloudflare for describing the [code-mode](https://blog.cloudflare.com/code-mode/) pattern.
 
+## For teams
+
+Want an MCP server for your team's or agency's data, or help running this one? [Talk to BLEN](https://www.blencorp.com/mcp).
+
 ---
 
-Built by [BLEN, Inc](https://www.blencorp.com).
+Built with ❤️ by [BLEN](https://www.blencorp.com).
