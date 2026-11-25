@@ -31,17 +31,6 @@ pnpm-debug.log*
 yarn-error.log*
 yarn-debug.log*
 
-# Terraform
-**/.terraform/
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log
-crash.*.log
-# Local tfvars (keep examples and shared vars)
-*.auto.tfvars
-terraform.tfvars
-
 # Editor / IDE
 .idea/
 .vscode/

@@ -168,7 +168,7 @@ function httpOptions(args: ParsedArgs, env: NodeJS.ProcessEnv): HttpServerOption
   } as HttpServerOptions;
 }
 
-/** Graceful shutdown (Railway and ECS send SIGTERM, Ctrl-C sends SIGINT). */
+/** Graceful shutdown (Railway sends SIGTERM, Ctrl-C sends SIGINT). */
 function onShutdown(close: () => Promise<void>): void {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info("shutdown.start", { signal });

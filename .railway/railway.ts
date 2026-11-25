@@ -3,6 +3,8 @@ import { defineRailway, github, project, service } from 'railway/iac';
 // repositories export their own partial name.
 // See https://docs.railway.com/infrastructure-as-code#multi-repo-projects
 export const partial = 'clinicaltrials-mcp-server';
+// The only Railway config for this service: railway.json/railway.toml are no longer read after 2026-12-01.
+// Apply changes with `railway config apply`.
 export default defineRailway(() => {
   const clinicaltrialMcp = service('clinicaltrial-mcp', {
     // Railway builds and deploys main from GitHub.
@@ -14,6 +16,8 @@ export default defineRailway(() => {
     healthcheckTimeout: 60,
     // Restart on failure (Railway's default type, stored as unset), at most 5 times.
     deploy: { restartPolicyMaxRetries: 5 },
+    // One replica: the gate, caches and per-IP limiter are in memory, so a second instance (or an old and a
+    // new one serving together during a deploy) would split the process-wide upstream rate.
     replicas: { 'us-east4-eqdc4a': 1 },
     domains: ['clinicaltrials.mcp.blencorp.com'],
   });
