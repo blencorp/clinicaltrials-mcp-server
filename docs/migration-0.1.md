@@ -79,7 +79,7 @@ before 0.1.0, so these are the changes from the `0.1.0-alpha.0` development line
    are refused; tokens need `exp` and `sub`; **every** configured scope must be present
    (`403 insufficient_scope` names the missing ones). The `*` wildcard scope no longer grants access.
 5. **The scope is `ctgov:read`** (was `ctgov.read`). Update the authorization server's scope, the
-   Clerk/OIDC application and `CTGOV_AUTH_SCOPES`. `deploy/aws` defaults follow.
+   Clerk/OIDC application and `CTGOV_AUTH_SCOPES`.
 6. **Hosting-mode precedence.** `--public-docs` or `--insecure` together with any configured
    `CTGOV_AUTH_PROVIDER` is a startup error (they used to ignore the provider silently).
    `--public-docs` and `--insecure` remain mutually exclusive. Docs-only startup stays
@@ -88,7 +88,7 @@ before 0.1.0, so these are the changes from the `0.1.0-alpha.0` development line
    and loopback on the listening port, never the request's own `Host`; others get `421`. Binding
    beyond loopback without `CTGOV_PUBLIC_ORIGIN` or `CTGOV_ALLOWED_HOSTS` stops startup, and
    authenticated serving beyond loopback needs `CTGOV_PUBLIC_ORIGIN` specifically (the OAuth metadata
-   names it). **The default Docker image binds 0.0.0.0, so Railway and AWS must now set
+   names it). **The default Docker image binds 0.0.0.0, so hosting platforms such as Railway must now set
    `CTGOV_PUBLIC_ORIGIN`.** `GET /health` is exempt.
 8. **Origin validation applies to the anonymous endpoint only** (`--public-docs`, `--insecure`):
    own origin, `CTGOV_ALLOWED_ORIGINS` and loopback pass, anything else is `403`. Bearer-authenticated
@@ -96,8 +96,8 @@ before 0.1.0, so these are the changes from the `0.1.0-alpha.0` development line
    OAuth discovery documents and `/mcp` answer CORS preflights without credentials.
 9. **Health.** `GET /health` is `{status, version, protocol}` (protocol `2026-07-28`; the old
    `timestamp` is gone). `/healthz` and `/readyz` are **removed**: they exposed the executor and
-   provider. Point platform health checks at `/health` (Dockerfile,
-   `railway.json` and `deploy/aws` already do).
+   provider. Point platform health checks at `/health` (the Dockerfile
+   and `.railway/railway.ts` already do).
 10. **Env var changes.**
 
     | Old | New |
@@ -118,9 +118,6 @@ before 0.1.0, so these are the changes from the `0.1.0-alpha.0` development line
 11. **Dependencies.** `@modelcontextprotocol/sdk` 1.x is replaced by `@modelcontextprotocol/server`
     and `/node` 2.x, zod 3 by 4, undici 6 by 8 (the `dispatcher` option is kept) and jose 5 by 6.
     The temporary audit exception for zod is gone.
-12. **AWS.** The task definition runs `--http` explicitly (it never inherits the image's docs-only
-    command), sets `CTGOV_PUBLIC_ORIGIN` and `CTGOV_CLIENT_IP_HEADER`, passes the audience as
-    `CTGOV_AUTH_AUDIENCE`, and the target group and container health checks use `/health`.
 
 ## Public exports
 

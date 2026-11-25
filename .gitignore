@@ -31,7 +31,8 @@ pnpm-debug.log*
 yarn-error.log*
 yarn-debug.log*
 
-# Terraform
+# Terraform. The AWS path (deploy/aws) was retired; these stay so leftover local state and tfvars,
+# which can hold secrets, are never committed.
 **/.terraform/
 *.tfstate
 *.tfstate.*

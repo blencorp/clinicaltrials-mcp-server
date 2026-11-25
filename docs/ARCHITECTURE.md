@@ -69,7 +69,7 @@ flowchart TD
 | User code to host | isolated-vm isolate (stdio, `--insecure`) or a Deno child process with no permissions (authenticated HTTP): no net/fs/env/ffi, `--disallow-code-generation-from-strings`, module Worker with a global allowlist, RSS watchdog, process-group kill, minimal environment, stderr never shown |
 | User code to escape hatches | dual-parse acorn preflight rejects imports, `eval`, `Function`, `globalThis`, `Deno`, `fetch`, `constructor`, `__proto__`, string-keyed forms of them and a closed wrapper; the SDK is plain-data RPC over a frozen methods table |
 | Sandbox to host | token-prefixed frames the user code cannot forge, size-bounded and validated; result, log and argument budgets enforced in the sandbox and again on the host; the execution settles once |
-| Incoming HTTP | Audience-bound, asymmetric, scope-checked JWT on every request (no sessions), RFC 9728 PRM, Host validation (421), Origin validation on the anonymous endpoint, 1 MiB body cap (also in the Node adapter), optional WAFv2 allow-list |
+| Incoming HTTP | Audience-bound, asymmetric, scope-checked JWT on every request (no sessions), RFC 9728 PRM, Host validation (421), Origin validation on the anonymous endpoint, 1 MiB body cap (also in the Node adapter) |
 | Pre-auth flood control | `IpRateLimiter`: per-IP token bucket on `/mcp` and the OAuth metadata (5 rps / 20 burst default, client address from `CTGOV_CLIENT_IP_HEADER`), runs before JWT verification |
 | Execution fair use | `ExecutionLimiter` (8 simultaneous, 2 per caller), per-execute call budget (100), hourly per-subject upstream quota (3000, authenticated only) |
 | Global upstream fair use | one process-wide `UpstreamGate`: 10 rps (`CTGOV_RATE_PER_SEC`), 8 in flight; a 429 pauses every caller |

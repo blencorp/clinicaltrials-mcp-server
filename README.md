@@ -172,7 +172,7 @@ The HTTP transport implements the stateless MCP `2026-07-28` Streamable HTTP pro
 
 It also serves OAuth 2.0 Protected Resource Metadata (RFC 9728) and per-IP rate limiting. `GET /health` answers `{status, version, protocol}`; point platform health checks there.
 
-**Docker and Railway.** The [`Dockerfile`](./deploy/Dockerfile) runs on Node 26 (LTS) with Deno and the documentation site included. Its default command is `--http --public-docs` (the hosted anonymous docs-only service, which is what [`railway.json`](./railway.json) runs): set `CTGOV_PUBLIC_ORIGIN` (the image binds `0.0.0.0`), `CTGOV_CLIENT_IP_HEADER=x-real-ip` on Railway, and the health check path to `/health`. To offer `execute`, override the command with `--http` and configure an OIDC provider or account mode, as above. An AWS Terraform module is in [`deploy/aws/`](./deploy/aws/README.md). The gate, caches and per-IP limiter are in memory, so run **one replica** (and avoid deploys where an old and a new instance serve at the same time), or the process-wide upstream rate is no longer shared.
+**Docker and Railway.** The [`Dockerfile`](./deploy/Dockerfile) runs on Node 26 (LTS) with Deno and the documentation site included. Its default command is `--http --public-docs` (the hosted anonymous docs-only service, which is what Railway runs; its settings are declared in [`.railway/railway.ts`](./.railway/railway.ts), the only Railway config file): set `CTGOV_PUBLIC_ORIGIN` (the image binds `0.0.0.0`), `CTGOV_CLIENT_IP_HEADER=x-real-ip` on Railway, and the health check path to `/health`. To offer `execute`, override the command with `--http` and configure an OIDC provider or account mode, as above. The gate, caches and per-IP limiter are in memory, so run **one replica** (and avoid deploys where an old and a new instance serve at the same time), or the process-wide upstream rate is no longer shared.
 
 ### Configuration
 
@@ -196,7 +196,7 @@ Every environment variable the server reads (`src/bin.ts`, plus the log level) a
 | `CTGOV_ALLOWED_HOSTS` | none | Extra accepted `Host` values (comma-separated). |
 | `CTGOV_ALLOWED_ORIGINS` | none | Extra browser origins accepted on the anonymous `/mcp`. |
 | `CTGOV_IP_RPS` / `CTGOV_IP_BURST` | `5` / `20` | Per-IP token bucket on the HTTP transport. |
-| `CTGOV_CLIENT_IP_HEADER` | unset | Header your proxy overwrites with the client address (Railway: `x-real-ip`; AWS ALB: `x-forwarded-for`, rightmost entry). Unset keys the limiter on the TCP peer. |
+| `CTGOV_CLIENT_IP_HEADER` | unset | Header your proxy overwrites with the client address (Railway: `x-real-ip`; an AWS ALB: `x-forwarded-for`, rightmost entry). Unset keys the limiter on the TCP peer. |
 | `DATABASE_URL` | none | Account mode: a dedicated PostgreSQL database. |
 | `BETTER_AUTH_SECRET` | none | Account mode: a random secret of at least 32 characters. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | Account mode: Google OAuth web application (redirect URI `https://<origin>/api/auth/callback/google`). |

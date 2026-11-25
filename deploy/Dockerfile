@@ -75,8 +75,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 # The image's default is the public hosting mode: anonymous and docs-only (no execute), so it starts
 # safely with no auth configured and does not depend on a platform start command (Railway stops
-# reading railway.json on 2026-12-01). It needs CTGOV_PUBLIC_ORIGIN (or CTGOV_ALLOWED_HOSTS) because
-# it binds 0.0.0.0. With auth configured, run it with `--http` instead; account mode
+# reading railway.json/railway.toml on 2026-12-01; `.railway/railway.ts` is the only Railway config
+# and sets none). It needs CTGOV_PUBLIC_ORIGIN (or CTGOV_ALLOWED_HOSTS) because it binds 0.0.0.0.
+# With auth configured, run it with `--http` instead; account mode
 # (CTGOV_AUTH_PROVIDER=accounts plus DATABASE_URL, BETTER_AUTH_SECRET, GOOGLE_CLIENT_ID/SECRET)
 # also runs with `--http`: the portal is in dist/web, so the image needs nothing else.
 ENTRYPOINT ["dumb-init", "--", "node", "dist/bin.js"]
