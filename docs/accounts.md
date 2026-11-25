@@ -109,7 +109,22 @@ Quotas stay on in account mode:
   ClinicalTrials.gov publishes no limit, and every caller's requests leave from this server.
 - Fixed: 600 requests/min per IP for browser traffic, 6000/min per IP and 600/min per user on
   `/mcp/account`; failed token checks are limited to 2/s per IP (bursts of 120) before they
-  reach the database. Behind a proxy set `CTGOV_CLIENT_IP_HEADER` (Railway: `x-real-ip`).
+  reach the database; only a token proven invalid spends that budget (valid tokens, database
+  errors and other limits do not), and at most 256 checks per IP run at once. Behind a proxy
+  set `CTGOV_CLIENT_IP_HEADER` (Railway: `x-real-ip`). Per-IP limits count an IPv6 address by
+  its /64 and an IPv4-mapped address as its IPv4 client.
+- `/oauth2/token` and `/oauth2/revoke` are limited per IP in memory (20 a second, bursts of
+  600) before any lookup. They then serialize per user with a transaction-scoped PostgreSQL
+  advisory lock (a code exchange per code; the lock follows the operation Better Auth will run:
+  form-encoded bodies only, revoke on `token`, refresh on `refresh_token`, code exchange on
+  `code`; a repeated deciding field is refused with 400; a request with nothing to lock takes
+  none). These requests use their own pool of `AUTH_LOCK_POOL_SIZE` connections per replica
+  (default 10, 2 to 200), in addition to the main pool of 10, so budget
+  `replicas x (10 + AUTH_LOCK_POOL_SIZE)` against PostgreSQL's `max_connections`. A waiting
+  request holds one in an open transaction (`idle in transaction`, with a 10 second
+  `lock_timeout`), so do not set a shorter `idle_in_transaction_session_timeout` on the role
+  than that plus the slowest token response. A request that cannot get a lock or a connection
+  within 10 seconds is answered with 503 and `Retry-After`, and the client retries.
 - MCP request bodies are capped at 1 MiB. Cookies are HttpOnly and SameSite, Secure in
   production; responses are non-cacheable.
 

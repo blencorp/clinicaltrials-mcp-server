@@ -12,7 +12,7 @@ import { MockAgent } from 'undici';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { randomToken, digest } from '../src/accounts/crypto.js';
 import { Store } from '../src/accounts/store.js';
-import { createAccountApp, allowedRedirect } from '../src/accounts/app.js';
+import { createAccountApp, allowedRedirect, lockTarget } from '../src/accounts/app.js';
 import { accountDependencies, publicDependencies, AccountQuota } from '../src/accounts/runtime.js';
 import { loadAccountConfig, type AccountConfig } from '../src/accounts/config.js';
 import { buildSupervisor, type SupervisorConfig } from '../src/supervisor/index.js';
@@ -47,6 +47,51 @@ describe('account configuration', () => {
   });
 });
 
+describe('AUTH_LOCK_POOL_SIZE', () => {
+  it('is optional, an integer from 2 to 200', () => {
+    expect(loadAccountConfig(ENV).authLockPoolSize).toBeUndefined();
+    expect(loadAccountConfig({ ...ENV, AUTH_LOCK_POOL_SIZE: '25' }).authLockPoolSize).toBe(25);
+    for (const bad of ['0', '1', '201', 'many', '2.5'])
+      expect(() => loadAccountConfig({ ...ENV, AUTH_LOCK_POOL_SIZE: bad }), bad).toThrow('AUTH_LOCK_POOL_SIZE');
+  });
+});
+
+describe('token and revoke locks follow the operation Better Auth will run', () => {
+  const form = 'application/x-www-form-urlencoded';
+  const target = (path: string, fields: string, type: string | undefined = form) => lockTarget(path, type, Buffer.from(fields));
+  it('revoke acts on token, refresh on refresh_token, a code exchange on code; other fields never choose', () => {
+    expect(target('/oauth2/revoke', 'token=R&refresh_token=junk')).toEqual({ token: 'R' });
+    expect(target('/oauth2/revoke', 'token=R&code=C')).toEqual({ token: 'R' });
+    expect(target('/oauth2/revoke', 'refresh_token=R')).toBeUndefined();
+    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=R&token=x')).toEqual({ token: 'R' });
+    expect(target('/oauth2/token', 'grant_type=authorization_code&code=C&refresh_token=junk&token=x')).toEqual({ code: 'C' });
+  });
+  it('parses as Better Auth does: form only, BOM stripped, grant_type trimmed, scheme stripped from a revoked token', () => {
+    expect(target('/oauth2/token', '{}&grant_type=refresh_token&refresh_token=R')).toEqual({ token: 'R' });
+    expect(target('/oauth2/token', '\uFEFFgrant_type=refresh_token&refresh_token=R')).toEqual({ token: 'R' });
+    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=R', `${form}; charset=utf-8`)).toEqual({ token: 'R' });
+    expect(target('/oauth2/token', 'grant_type=+refresh_token+&refresh_token=R')).toEqual({ token: 'R' });
+    expect(target('/oauth2/token', 'grant_type=%09authorization_code%0A&code=C')).toEqual({ code: 'C' });
+    expect(target('/oauth2/revoke', 'token=Bearer+R')).toEqual({ token: 'R' });
+    expect(target('/oauth2/revoke', 'token=bearer++R')).toEqual({ token: 'R' });
+  });
+  it('treats a repeated deciding field as ambiguous, and a repeated unrelated one as harmless', () => {
+    expect(target('/oauth2/revoke', 'token=A&token=B')).toEqual({ ambiguous: true });
+    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=A&refresh_token=B')).toEqual({ ambiguous: true });
+    expect(target('/oauth2/token', 'grant_type=a&grant_type=refresh_token&refresh_token=A')).toEqual({ ambiguous: true });
+    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=A&scope=a&scope=b')).toEqual({ token: 'A' });
+  });
+  it('takes no lock when there is nothing to lock: client_credentials, missing fields, other media types', () => {
+    expect(target('/oauth2/token', 'grant_type=client_credentials&client_id=x')).toBeUndefined();
+    expect(target('/oauth2/token', 'grant_type=authorization_code')).toBeUndefined();
+    expect(target('/oauth2/token', 'grant_type=refresh_token')).toBeUndefined();
+    expect(target('/oauth2/token', '')).toBeUndefined();
+    expect(target('/oauth2/token', '{"grant_type":"refresh_token","refresh_token":"R"}', 'application/json')).toBeUndefined();
+    expect(lockTarget('/oauth2/token', undefined, Buffer.from('grant_type=refresh_token&refresh_token=R'))).toBeUndefined();
+    expect(lockTarget('/oauth2/token', form, undefined)).toBeUndefined();
+  });
+});
+
 describe('the anonymous catalog', () => {
   it('offers search_api and describe_schema only: execute is not registered, even though a sandbox exists', async () => {
     const deps = await buildSupervisor(supervisorCfg({ sandbox: 'auto', tools: 'all' }));
@@ -67,7 +112,7 @@ describe('account quota', () => {
 
 const database = process.env.TEST_DATABASE_URL;
 describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
-  let pool: Pool, store: Store, server: Server, config: AccountConfig, docsRoot: string;
+  let supervisorDeps: Awaited<ReturnType<typeof buildSupervisor>>, pool: Pool, store: Store, server: Server, config: AccountConfig, docsRoot: string;
   let service: Awaited<ReturnType<typeof createAccountApp>>;
   let helper: ReturnType<ReturnType<typeof testUtils>['init']>['context']['test'];
   let alice: any, bob: any, browser: typeof fetch, other: typeof fetch;
@@ -169,9 +214,9 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
       clientIpHeader: 'x-real-ip', docsRoot };
     // Upstream ClinicalTrials.gov calls go through an injected MockAgent, never the global dispatcher.
     mock = new MockAgent(); mock.disableNetConnect();
-    const deps = await buildSupervisor({ ...cfg, dispatcher: mock });
+    const deps = supervisorDeps = await buildSupervisor({ ...cfg, dispatcher: mock });
     expect(await deps.sandbox?.available(), 'Deno is required for account integration tests').toBe(true);
-    service = await createAccountApp(config, store, accountDependencies(deps, store, HOURLY), publicDependencies(deps));
+    service = await createAccountApp(config, store, accountDependencies(deps, store, HOURLY), publicDependencies(deps), { lockWaitMs: 2000 });
     server.on('request', service.app);
     helper = testUtils().init((await service.auth.$context) as unknown as Parameters<ReturnType<typeof testUtils>['init']>[0]).context.test;
     alice = await helper.saveUser(helper.createUser({ email: 'alice@example.test', emailVerified: true }));
@@ -404,16 +449,241 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     expect(await bucket('mcp-ip:203.0.113.5')).toBe(2);
     expect(await bucket('mcp-ip:198.51.100.7')).toBe(1);
   });
+  const mcpAs = (ip: string, bearer: string) => fetch(`${config.origin}/mcp/account`, { method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'x-real-ip': ip } });
   it('limits failed token checks per IP before they reach the database', async () => {
     const bucket = async (key: string) => (await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(key)])).rows[0]?.count;
-    const post = (ip: string) => fetch(`${config.origin}/mcp/account`, { method: 'POST', headers: { authorization: 'Bearer made-up', 'x-real-ip': ip } });
-    const statuses = await Promise.all(Array.from({ length: 125 }, () => post('192.0.2.44').then(r => r.status)));
-    expect(statuses.filter(s => s === 401).length).toBeGreaterThanOrEqual(120);
-    expect(statuses.filter(s => s === 429).length).toBeGreaterThan(0);
-    const counted = await bucket('mcp-ip:192.0.2.44');
-    const more = await Promise.all(Array.from({ length: 10 }, () => post('192.0.2.44').then(r => r.status)));
-    expect(await bucket('mcp-ip:192.0.2.44')).toBe(counted + more.filter(s => s === 401).length);
-    expect((await post('192.0.2.45')).status).toBe(401);
+    const context = await service.auth.$context;
+    const original = context.adapter.findOne;
+    let lookups = 0;
+    context.adapter.findOne = ((...args: Parameters<typeof original>) => { lookups++; return original(...args); }) as typeof original;
+    onTestFinished(() => { context.adapter.findOne = original; });
+    let accepted = 0;
+    while ((await mcpAs('192.0.2.44', `made-up-${accepted}`)).status === 401 && accepted < 400) accepted++;
+    expect(accepted).toBeGreaterThanOrEqual(100);
+    expect(accepted).toBeLessThan(200);
+    // Past the limit a made-up token costs no database round trip and no store write.
+    const counted = await bucket('mcp-ip:192.0.2.44'), before = lookups;
+    for (let i = 0; i < 10; i++) expect((await mcpAs('192.0.2.44', `more-${i}`)).status).toBe(429);
+    expect(lookups).toBe(before);
+    expect(await bucket('mcp-ip:192.0.2.44')).toBe(counted);
+    expect((await mcpAs('192.0.2.45', 'made-up')).status).toBe(401);
+  });
+  it('spends the failure budget only on tokens proven invalid: valid tokens, and database errors, cost nothing', async () => {
+    const valid = (await freshAccount('budget')).access_token;
+    // Valid tokens from one shared IP are never throttled by the failure budget, even all at once.
+    const statuses = await Promise.all(Array.from({ length: 45 }, () => mcpAs('192.0.2.120', valid).then(r => r.status)));
+    expect(statuses).not.toContain(401);
+    expect((await mcpAs('192.0.2.120', 'made-up')).status).toBe(401);
+    // Mixed in with 30 valid requests, 100 forged ones leave about 20 of the 120 failures.
+    for (let i = 0; i < 100; i++) expect((await mcpAs('192.0.2.121', `forged-${i}`)).status).toBe(401);
+    for (let i = 0; i < 30; i++) await mcpAs('192.0.2.121', valid);
+    let more = 0;
+    while ((await mcpAs('192.0.2.121', `forged-more-${more}`)).status === 401 && more < 200) more++;
+    expect(more).toBeGreaterThanOrEqual(15); expect(more).toBeLessThan(40);
+    // A database error is not a failed token.
+    const context = await service.auth.$context;
+    const original = context.adapter.findOne;
+    context.adapter.findOne = (async () => { throw new Error('database down'); }) as typeof original;
+    try { for (let i = 0; i < 150; i++) expect((await mcpAs('192.0.2.122', `err-${i}`)).status).toBe(500); }
+    finally { context.adapter.findOne = original; }
+    expect((await mcpAs('192.0.2.122', 'after-errors')).status).toBe(401);
+  });
+  it('bounds token checks in flight per address, so concurrency cannot dodge the failure budget', async () => {
+    const replica = await createAccountApp(config, store, accountDependencies(supervisorDeps, store, HOURLY), publicDependencies(supervisorDeps), { maxTokenChecksInFlight: 8 });
+    server.removeListener('request', service.app); server.on('request', replica.app);
+    onTestFinished(async () => { server.removeListener('request', replica.app); server.on('request', service.app); await replica.close(); });
+    const context = await replica.auth.$context;
+    const original = context.adapter.findOne;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    let lookups = 0;
+    context.adapter.findOne = (async (...args: Parameters<typeof original>) => { lookups++; await gate; return original(...args); }) as typeof original;
+    onTestFinished(() => { release(); context.adapter.findOne = original; });
+    const held = Array.from({ length: 8 }, (_, i) => mcpAs('192.0.2.150', `held-${i}`).then(r => r.status));
+    await vi.waitFor(() => expect(lookups).toBe(8), { timeout: 15_000, interval: 25 });
+    expect((await mcpAs('192.0.2.150', 'extra')).status, 'the ninth check is refused at once').toBe(429);
+    expect(lookups).toBe(8);
+    // Another address is not affected by this one's backlog.
+    const other = mcpAs('192.0.2.151', 'other').then(r => r.status);
+    await vi.waitFor(() => expect(lookups).toBe(9), { timeout: 15_000, interval: 25 });
+    release();
+    expect(await Promise.all(held)).toEqual(Array(8).fill(401));
+    expect(await other).toBe(401);
+    // The slots come back once the checks finish.
+    expect((await mcpAs('192.0.2.150', 'after')).status).toBe(401);
+  });
+  it('counts one IPv6 /64 as one client in every limiter, and an IPv4-mapped address as its IPv4 client', async () => {
+    let limited = false;
+    for (let i = 0; i < 300 && !limited; i++) limited = (await mcpAs(`2001:db8:9:9::${i + 1}`, `forged-${i}`)).status === 429;
+    expect(limited, 'the /64 shares one failure budget').toBe(true);
+    expect((await mcpAs('2001:db8:9:9:aaaa::1', 'again')).status).toBe(429);
+    expect((await mcpAs('2001:db8:9:a::1', 'again')).status).toBe(401);
+    const bucket = async (key: string) => (await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(key)])).rows[0]?.count;
+    expect(await bucket('mcp-ip:2001:db8:9:9::/64')).toBeGreaterThan(0);
+    expect(await bucket('mcp-ip:2001:db8:9:9::1')).toBeUndefined();
+    expect((await mcpAs('::ffff:192.0.2.160', 'x')).status).toBe(401);
+    expect(await bucket('mcp-ip:192.0.2.160')).toBe(1);
+  });
+  /** Wraps the Better Auth handler for the rest of the test, counting token and revoke requests it runs. */
+  function watchHandler(wrap?: (original: typeof service.auth.handler) => typeof service.auth.handler) {
+    const original = service.auth.handler;
+    const seen = { entered: 0 };
+    const counting = (request: Request) => { if (/\/oauth2\/(token|revoke)$/.test(new URL(request.url).pathname)) seen.entered++; return original(request); };
+    service.auth.handler = wrap ? wrap(counting as typeof original) : counting as typeof original;
+    onTestFinished(() => { service.auth.handler = original; });
+    return seen;
+  }
+  const rawPost = (path: string, body: string, headers: Record<string, string> = {}) => fetch(`${config.origin}/api/auth/oauth2/${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body,
+  });
+  const lockId = (key: string) => BigInt.asIntN(64, BigInt(`0x${digest(key).slice(0, 16)}`)).toString();
+  /** Holds one advisory lock in an open transaction until `done()`. */
+  async function holdLock(key: string) {
+    const hold = await pool.connect();
+    await hold.query('BEGIN'); await hold.query('SELECT pg_advisory_xact_lock($1)', [lockId(key)]);
+    let released = false;
+    const done = async () => { if (released) return; released = true; await hold.query('ROLLBACK'); hold.release(); };
+    onTestFinished(done);
+    return done;
+  }
+  it('padded grants and scheme-prefixed revoke tokens wait on the same lock as the plain forms, and only that lock', async () => {
+    const refreshAccount = await freshAccount('lock-padded'), revokeAccount = await freshAccount('lock-bearer');
+    const flow = await authorize();
+    const padded = new URLSearchParams({ client_id: refreshAccount.clientId, grant_type: ' refresh_token ', refresh_token: refreshAccount.refresh_token }).toString();
+    const bearer = new URLSearchParams({ client_id: revokeAccount.clientId, token: `Bearer ${revokeAccount.refresh_token}`, refresh_token: 'made-up' }).toString();
+    const code = new URLSearchParams({ client_id: flow.client.client_id, grant_type: '\tauthorization_code ', code: flow.code!, code_verifier: flow.verifier, redirect_uri: flow.client.redirect_uris[0], refresh_token: 'made-up', token: 'other' }).toString();
+    const variants = [
+      ['padded', 'token', padded, `user:${refreshAccount.userId}`],
+      ['bearer', 'revoke', bearer, `user:${revokeAccount.userId}`],
+      ['code', 'token', code, `code:${flow.code}`],
+    ] as const;
+    for (const [name, path, body, key] of variants) {
+      const seen = watchHandler();
+      const done = await holdLock(key);
+      const started = Date.now();
+      const waiting = await rawPost(path, body);
+      expect(waiting.status, `${name} waits for the held lock`).toBe(503);
+      expect(waiting.headers.get('retry-after')).toBeTruthy();
+      expect(seen.entered, `${name} did not run under another lock`).toBe(0);
+      expect(Date.now() - started).toBeLessThan(8000);
+      await done();
+    }
+    // With nothing held they run (the lock was released and the connection came back).
+    expect((await rawPost('token', padded)).status).toBe(200);
+    expect((await rawPost('revoke', bearer)).status).toBe(200);
+    expect((await rawPost('token', code)).status, 'the code works once').toBe(200);
+    // Stray fields never choose the lock: a lock on another user's token does not block this revoke.
+    const mine = await freshAccount('lock-mine'), theirs = await freshAccount('lock-theirs');
+    const done = await holdLock(`user:${theirs.userId}`);
+    const seen = watchHandler();
+    const unaffected = await rawPost('revoke', new URLSearchParams({ client_id: mine.clientId, token: mine.refresh_token, refresh_token: theirs.refresh_token }).toString());
+    expect(unaffected.status).toBe(200);
+    expect(seen.entered).toBe(1);
+    await done();
+  });
+  it('refuses repeated deciding fields, and requests with nothing to lock take no lock', async () => {
+    const ambiguous = await rawPost('revoke', 'client_id=x&token=A&token=B');
+    expect(ambiguous.status).toBe(400);
+    expect((await ambiguous.json() as any).error).toBe('invalid_request');
+    expect((await rawPost('token', 'grant_type=refresh_token&refresh_token=A&refresh_token=B')).status).toBe(400);
+    expect((await rawPost('token', 'grant_type=a&grant_type=refresh_token&refresh_token=A')).status).toBe(400);
+    const seen = watchHandler();
+    // These would share one lock key if nothing-to-lock fell back to a constant; a held lock on
+    // the old fallback keys must not make them wait.
+    const dones = [await holdLock('code:'), await holdLock(`token:${digest('')}`)];
+    const started = Date.now();
+    expect((await rawPost('token', 'grant_type=client_credentials&client_id=n')).status).not.toBe(503);
+    expect((await rawPost('token', 'not a form')).status).not.toBe(503);
+    expect((await rawPost('token', 'grant_type=authorization_code&client_id=n')).status).not.toBe(503);
+    expect((await fetch(`${config.origin}/api/auth/oauth2/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"grant_type":"refresh_token","refresh_token":"R"}' })).status).not.toBe(503);
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(seen.entered).toBe(4);
+    for (const done of dones) await done();
+  });
+  it('same-token operations run one at a time, whatever extra fields they carry', async () => {
+    const a = await freshAccount('lock-serial');
+    const inside = { now: 0, max: 0 };
+    watchHandler(original => async request => {
+      if (!/\/oauth2\/(token|revoke)$/.test(new URL(request.url).pathname)) return original(request);
+      inside.max = Math.max(inside.max, ++inside.now);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      try { return await original(request); } finally { inside.now--; }
+    });
+    const base = { client_id: a.clientId };
+    const results = await Promise.all([
+      rawPost('token', new URLSearchParams({ ...base, grant_type: 'refresh_token', refresh_token: a.refresh_token }).toString()),
+      rawPost('revoke', new URLSearchParams({ ...base, token: a.refresh_token, refresh_token: 'made-up' }).toString()),
+      rawPost('token', new URLSearchParams({ ...base, grant_type: ' refresh_token', refresh_token: a.refresh_token, token: 'x' }).toString()),
+    ]);
+    expect(results.every(r => r.status < 500), results.map(r => r.status).join()).toBe(true);
+    expect(inside.max).toBe(1);
+  });
+  it('answers 503 with Retry-After when the lock wait or the lock pool runs out, rolling back and freeing the connection', async () => {
+    const [one, two] = [await freshAccount('wait-1'), await freshAccount('wait-2')];
+    const refresh = (g: typeof one) => exchange(g.clientId, { grant_type: 'refresh_token', refresh_token: g.refresh_token });
+    // A wait that outlasts lock_timeout fails instead of queueing forever.
+    let hold!: () => void;
+    const held = new Promise<void>(resolve => (hold = resolve));
+    watchHandler(original => async request => {
+      if (new URLSearchParams(await request.clone().text()).get('refresh_token') === one.refresh_token) await held;
+      return original(request);
+    });
+    const slow = refresh(one);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const sameUser = await exchange(one.clientId, { grant_type: 'refresh_token', refresh_token: one.refresh_token });
+    expect(sameUser.status).toBe(503);
+    expect(sameUser.headers.get('retry-after')).toBeTruthy();
+    hold();
+    expect((await slow).status).toBe(200);
+    // Nothing is left holding the lock or an open transaction.
+    const idle = await pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE state = 'idle in transaction' AND query LIKE '%pg_advisory_xact_lock%' AND datname = current_database()");
+    expect(idle.rows[0].n).toBe(0);
+    expect((await refresh(two)).status).toBe(200);
+    // With a pool of 2 and both connections waiting, a third request times out getting one.
+    const small = await createAccountApp({ ...config, authLockPoolSize: 2 }, store, accountDependencies(supervisorDeps, store, HOURLY), publicDependencies(supervisorDeps), { lockWaitMs: 400 });
+    server.removeListener('request', service.app); server.on('request', small.app);
+    onTestFinished(async () => { server.removeListener('request', small.app); server.on('request', service.app); await small.close(); });
+    const [a, b, c] = [await freshAccount('pool-a'), await freshAccount('pool-b'), await freshAccount('pool-c')];
+    let open!: () => void;
+    const gate = new Promise<void>(resolve => (open = resolve));
+    const original = small.auth.handler;
+    small.auth.handler = (async (request: Request) => {
+      const t = new URLSearchParams(await request.clone().text()).get('refresh_token');
+      if (t === a.refresh_token || t === b.refresh_token) await gate;
+      return original(request);
+    }) as typeof original;
+    onTestFinished(open);
+    const inFlight = [refresh(a), refresh(b)];
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const starved = await refresh(c);
+    expect(starved.status).toBe(503);
+    expect(starved.headers.get('retry-after')).toBeTruthy();
+    open();
+    for (const r of await Promise.all(inFlight)) expect(r.status).toBe(200);
+    expect((await refresh(c)).status, 'the pool recovered').toBe(200);
+  });
+  it('limits /oauth2/token and /oauth2/revoke per client address (an IPv6 /64 as one) before any lookup', async () => {
+    const replica = await createAccountApp(config, store, accountDependencies(supervisorDeps, store, HOURLY), publicDependencies(supervisorDeps), { lockWaitMs: 300, tokenRequestLimit: { rps: 0.001, burst: 3 } });
+    server.removeListener('request', service.app); server.on('request', replica.app);
+    onTestFinished(async () => { server.removeListener('request', replica.app); server.on('request', service.app); await replica.close(); });
+    const context = await replica.auth.$context;
+    const original = context.adapter.findOne;
+    let lookups = 0;
+    context.adapter.findOne = ((...args: Parameters<typeof original>) => { lookups++; return original(...args); }) as typeof original;
+    onTestFinished(() => { context.adapter.findOne = original; });
+    const post = (path: string, ip: string, body: Record<string, string>) =>
+      rawPost(path, new URLSearchParams({ client_id: 'nobody', ...body }).toString(), { 'x-real-ip': ip }).then(r => r.status);
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) statuses.push(await post('token', '192.0.2.131', { grant_type: 'refresh_token', refresh_token: 'x' }));
+    expect(statuses.slice(3)).toEqual([429, 429, 429]);
+    expect(statuses.slice(0, 3).every(s => s !== 429)).toBe(true);
+    const before = lookups;
+    expect(await post('revoke', '192.0.2.131', { token: 'x' })).toBe(429);
+    expect(lookups, 'limited before the lock lookup').toBe(before);
+    expect(await post('revoke', '192.0.2.132', { token: 'x' })).not.toBe(429);
+    for (let i = 0; i < 3; i++) await post('revoke', `2001:db8:5:6::${i + 1}`, { token: 'x' });
+    expect(await post('revoke', '2001:db8:5:6:ffff::1', { token: 'x' })).toBe(429);
+    expect(await post('revoke', '2001:db8:5:7::1', { token: 'x' })).not.toBe(429);
   });
   it('serves only search_api and describe_schema at /mcp without sign-in: no execute, and no upstream call', async () => {
     const listTools = async (token?: string) => {

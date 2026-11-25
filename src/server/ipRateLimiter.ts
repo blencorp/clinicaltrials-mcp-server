@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { isIP } from "node:net";
 import { LRUCache } from "lru-cache";
 
 /**
@@ -17,22 +18,35 @@ export class IpRateLimiter {
     this.buckets = new LRUCache({ max: 50_000, ttl });
   }
 
+  /** True when the address has a token left; spends nothing. */
+  available(ip: string): boolean {
+    return this.refilled(bucketKey(ip)).tokens >= 1;
+  }
+
+  /** Spends a token even when none is left (the balance floors at zero). */
+  spend(ip: string): void {
+    const key = bucketKey(ip);
+    const b = this.refilled(key);
+    b.tokens = Math.max(0, b.tokens - 1);
+    this.buckets.set(key, b);
+  }
+
+  /** Spends one token; false when the address is out of tokens. */
   allow(ip: string): boolean {
-    const b = this.refilled(ip);
-    if (b.tokens < 1) {
-      this.buckets.set(ip, b);
-      return false;
-    }
-    b.tokens -= 1;
-    this.buckets.set(ip, b);
-    return true;
+    const key = bucketKey(ip);
+    const b = this.refilled(key);
+    const ok = b.tokens >= 1;
+    if (ok) b.tokens -= 1;
+    this.buckets.set(key, b);
+    return ok;
   }
 
   /** Gives back a token that `allow(ip)` spent, for a request that turned out not to count. */
   refund(ip: string): void {
-    const b = this.refilled(ip);
+    const key = bucketKey(ip);
+    const b = this.refilled(key);
     b.tokens = Math.min(this.burst, b.tokens + 1);
-    this.buckets.set(ip, b);
+    this.buckets.set(key, b);
   }
 
   private refilled(ip: string): { tokens: number; updatedAt: number } {
@@ -65,4 +79,23 @@ export function clientIp(req: IncomingMessage, trustedHeader?: string): string {
 
 function normalize(ip: string): string {
   return ip.replace(/^::ffff:/, "");
+}
+
+/**
+ * The bucket an address is counted in. An IPv6 customer controls a whole /64 (usually far more),
+ * so counting single addresses would let one host mint endless fresh buckets. An IPv4-mapped
+ * address (what a dual-stack socket reports) is the IPv4 client, not one /64.
+ */
+export function bucketKey(ip: string): string {
+  ip = normalize(ip);
+  if (!ip.includes(":") || isIP(ip) !== 6) return ip;
+  const [head = "", tail] = ip.split("::");
+  const groups = head ? head.split(":") : [];
+  if (tail !== undefined) {
+    const rest = tail ? tail.split(":") : [];
+    while (groups.length + rest.length < 8) groups.push("0");
+    groups.push(...rest);
+  }
+  if (groups.length !== 8) return ip;
+  return `${groups.slice(0, 4).map(g => g.toLowerCase().replace(/^0+(?=.)/, "")).join(":")}::/64`;
 }
