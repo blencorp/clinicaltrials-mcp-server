@@ -59,39 +59,45 @@ describe('CTGOV_AUTH_LOCK_POOL_SIZE', () => {
 describe('token and revoke locks follow the operation Better Auth will run', () => {
   const form = 'application/x-www-form-urlencoded';
   const target = (path: string, fields: string, type: string | undefined = form) => lockTarget(path, type, Buffer.from(fields));
-  it('revoke acts on token, refresh on refresh_token, a code exchange on code; other fields never choose', () => {
-    expect(target('/oauth2/revoke', 'token=R&refresh_token=junk')).toEqual({ token: 'R' });
-    expect(target('/oauth2/revoke', 'token=R&code=C')).toEqual({ token: 'R' });
-    expect(target('/oauth2/revoke', 'refresh_token=R')).toBeUndefined();
-    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=R&token=x')).toEqual({ token: 'R' });
-    expect(target('/oauth2/token', 'grant_type=authorization_code&code=C&refresh_token=junk&token=x')).toEqual({ code: 'C' });
+  it('revoke acts on token, refresh on refresh_token, a code exchange on code; other fields never choose', async () => {
+    expect(await target('/oauth2/revoke', 'token=R&refresh_token=junk')).toEqual({ token: 'R' });
+    expect(await target('/oauth2/revoke', 'token=R&code=C')).toEqual({ token: 'R' });
+    expect(await target('/oauth2/revoke', 'refresh_token=R')).toBeUndefined();
+    expect(await target('/oauth2/token', 'grant_type=refresh_token&refresh_token=R&token=x')).toEqual({ token: 'R' });
+    expect(await target('/oauth2/token', 'grant_type=authorization_code&code=C&refresh_token=junk&token=x')).toEqual({ code: 'C' });
   });
-  it('parses as Better Auth does: form only, BOM stripped, grant_type trimmed, scheme stripped from a revoked token', () => {
-    expect(target('/oauth2/token', '{}&grant_type=refresh_token&refresh_token=R')).toEqual({ token: 'R' });
-    expect(target('/oauth2/token', '\uFEFFgrant_type=refresh_token&refresh_token=R')).toEqual({ token: 'R' });
-    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=R', `${form}; charset=utf-8`)).toEqual({ token: 'R' });
-    expect(target('/oauth2/token', 'grant_type=+refresh_token+&refresh_token=R')).toEqual({ token: 'R' });
-    expect(target('/oauth2/token', 'grant_type=%09authorization_code%0A&code=C')).toEqual({ code: 'C' });
-    // A leading '?' stays in the first key, as in Better Auth's parser, so it is not the field.
-    expect(target('/oauth2/revoke', '?token=R')).toBeUndefined();
-    expect(target('/oauth2/revoke', '?a=1&token=R')).toEqual({ token: 'R' });
-    expect(target('/oauth2/revoke', 'token=Bearer+R')).toEqual({ token: 'R' });
-    expect(target('/oauth2/revoke', 'token=bearer++R')).toEqual({ token: 'R' });
+  it('parses as Better Auth does: form only, BOM stripped, grant_type trimmed, scheme stripped from a revoked token', async () => {
+    expect(await target('/oauth2/token', '{}&grant_type=refresh_token&refresh_token=R')).toEqual({ token: 'R' });
+    // A BOM is handled by the runtime's parser, whichever way that goes (it is then what Better Auth sees too).
+    const bom = '\uFEFFgrant_type=refresh_token&refresh_token=R';
+    expect(await target('/oauth2/token', bom)).toEqual((await new Request('http://x/', { method: 'POST', headers: { 'content-type': form }, body: bom }).formData()).get('grant_type') === 'refresh_token' ? { token: 'R' } : undefined);
+    expect(await target('/oauth2/token', 'grant_type=refresh_token&refresh_token=R', `${form}; charset=utf-8`)).toEqual({ token: 'R' });
+    expect(await target('/oauth2/token', 'grant_type=+refresh_token+&refresh_token=R')).toEqual({ token: 'R' });
+    expect(await target('/oauth2/token', 'grant_type=%09authorization_code%0A&code=C')).toEqual({ code: 'C' });
+    // A leading '?' is whatever the runtime's own form parser (Better Auth's) makes of it.
+    const parsed = (fields: string) => new Request('http://x/', { method: 'POST', headers: { 'content-type': form }, body: fields }).formData();
+    for (const fields of ['?token=R', '?token=Bearer%20R&client_id=C'])
+      expect(await target('/oauth2/revoke', fields)).toEqual((await parsed(fields)).has('token') ? { token: 'R' } : undefined);
+    for (const fields of ['?grant_type=refresh_token&refresh_token=R&client_id=C'])
+      expect(await target('/oauth2/token', fields)).toEqual((await parsed(fields)).get('grant_type') === 'refresh_token' ? { token: 'R' } : undefined);
+    expect(await target('/oauth2/token', 'grant_type=refresh_token&refresh_token=A&refresh_token=A')).toEqual({ token: 'A' });
+    expect(await target('/oauth2/revoke', 'token=Bearer+R')).toEqual({ token: 'R' });
+    expect(await target('/oauth2/revoke', 'token=bearer++R')).toEqual({ token: 'R' });
   });
-  it('treats a repeated deciding field as ambiguous, and a repeated unrelated one as harmless', () => {
-    expect(target('/oauth2/revoke', 'token=A&token=B')).toEqual({ ambiguous: true });
-    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=A&refresh_token=B')).toEqual({ ambiguous: true });
-    expect(target('/oauth2/token', 'grant_type=a&grant_type=refresh_token&refresh_token=A')).toEqual({ ambiguous: true });
-    expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=A&scope=a&scope=b')).toEqual({ token: 'A' });
+  it('treats a repeated deciding field as ambiguous, and a repeated unrelated one as harmless', async () => {
+    expect(await target('/oauth2/revoke', 'token=A&token=B')).toEqual({ ambiguous: true });
+    expect(await target('/oauth2/token', 'grant_type=refresh_token&refresh_token=A&refresh_token=B')).toEqual({ ambiguous: true });
+    expect(await target('/oauth2/token', 'grant_type=a&grant_type=refresh_token&refresh_token=A')).toEqual({ ambiguous: true });
+    expect(await target('/oauth2/token', 'grant_type=refresh_token&refresh_token=A&scope=a&scope=b')).toEqual({ token: 'A' });
   });
-  it('takes no lock when there is nothing to lock: client_credentials, missing fields, other media types', () => {
-    expect(target('/oauth2/token', 'grant_type=client_credentials&client_id=x')).toBeUndefined();
-    expect(target('/oauth2/token', 'grant_type=authorization_code')).toBeUndefined();
-    expect(target('/oauth2/token', 'grant_type=refresh_token')).toBeUndefined();
-    expect(target('/oauth2/token', '')).toBeUndefined();
-    expect(target('/oauth2/token', '{"grant_type":"refresh_token","refresh_token":"R"}', 'application/json')).toBeUndefined();
-    expect(lockTarget('/oauth2/token', undefined, Buffer.from('grant_type=refresh_token&refresh_token=R'))).toBeUndefined();
-    expect(lockTarget('/oauth2/token', form, undefined)).toBeUndefined();
+  it('takes no lock when there is nothing to lock: client_credentials, missing fields, other media types', async () => {
+    expect(await target('/oauth2/token', 'grant_type=client_credentials&client_id=x')).toBeUndefined();
+    expect(await target('/oauth2/token', 'grant_type=authorization_code')).toBeUndefined();
+    expect(await target('/oauth2/token', 'grant_type=refresh_token')).toBeUndefined();
+    expect(await target('/oauth2/token', '')).toBeUndefined();
+    expect(await target('/oauth2/token', '{"grant_type":"refresh_token","refresh_token":"R"}', 'application/json')).toBeUndefined();
+    expect(await lockTarget('/oauth2/token', undefined, Buffer.from('grant_type=refresh_token&refresh_token=R'))).toBeUndefined();
+    expect(await lockTarget('/oauth2/token', form, undefined)).toBeUndefined();
   });
 });
 
@@ -583,6 +589,28 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     expect(unaffected.status).toBe(200);
     expect(seen.entered).toBe(1);
     await done();
+  });
+  it('leading-? bodies take the lock the real parser gives them: held lock means 503 and Better Auth never runs', async () => {
+    const parsed = (fields: string) => new Request('http://x/', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: fields }).formData();
+    const refreshAccount = await freshAccount('lock-q-refresh'), revokeAccount = await freshAccount('lock-q-revoke');
+    const refresh = `?${new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshAccount.refresh_token, client_id: refreshAccount.clientId })}`;
+    const revoke = `?${new URLSearchParams({ token: `Bearer ${revokeAccount.refresh_token}`, client_id: revokeAccount.clientId })}`;
+    const flow = await authorize();
+    const code = `?${new URLSearchParams({ grant_type: 'authorization_code', code: flow.code!, code_verifier: flow.verifier, redirect_uri: flow.client.redirect_uris[0], client_id: flow.client.client_id })}`;
+    for (const [path, body, key, field, value] of [
+      ['token', refresh, `user:${refreshAccount.userId}`, 'grant_type', 'refresh_token'],
+      ['revoke', revoke, `user:${revokeAccount.userId}`, 'token', undefined],
+      ['token', code, `code:${flow.code}`, 'grant_type', 'authorization_code'],
+    ] as const) {
+      // Whether this runtime strips the '?' (Node 24 does) decides if Better Auth sees the field at all.
+      const intended = (await parsed(body)).get(field) !== null && (value === undefined || (await parsed(body)).get(field) === value);
+      const seen = watchHandler();
+      const done = await holdLock(key);
+      const res = await rawPost(path, body);
+      if (intended) { expect(res.status, `${path} ${key}`).toBe(503); expect(seen.entered).toBe(0); }
+      else expect(res.status).not.toBe(503);
+      await done();
+    }
   });
   it('refuses repeated deciding fields, and requests with nothing to lock take no lock', async () => {
     const ambiguous = await rawPost('revoke', 'client_id=x&token=A&token=B');

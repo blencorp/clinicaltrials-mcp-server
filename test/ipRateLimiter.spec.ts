@@ -75,3 +75,29 @@ describe("failure budget and /64 bucketing", () => {
     expect(bucketKey("::ffff:203.0.113.5")).not.toBe(bucketKey("::ffff:198.51.100.9"));
   });
 });
+
+describe("one canonicalizer for header and bucket", () => {
+  const key = (value: string) => bucketKey(clientIp(req("10.0.0.1", { "x-real-ip": value }), "x-real-ip"));
+  it("keeps mapped IPv4 clients distinct, whatever the spelling", () => {
+    const same = ["203.0.113.5", "::ffff:203.0.113.5", "::FFFF:CB00:7105", "::ffff:cb00:7105", "0:0:0:0:0:ffff:cb00:7105", "0:0:0:0:0:ffff:203.0.113.5"];
+    for (const v of same) expect(key(v), v).toBe("203.0.113.5");
+    expect(key("0:0:0:0:0:ffff:cb00:7106")).toBe("203.0.113.6");
+    expect(key("::ffff:cb00:7106")).not.toBe(key("::ffff:cb00:7105"));
+  });
+  it("buckets mixed-form IPv6 by /64", () => {
+    const k = key("2001:db8:1:2::1");
+    expect(k).toBe("2001:db8:1:2::/64");
+    expect(key("2001:db8:1:2:0:0:1.2.3.4")).toBe(k);
+    expect(key("2001:DB8:1:2:ffff:ffff:ffff:ffff")).toBe(k);
+    expect(key("2001:db8:1:3::1")).not.toBe(k);
+  });
+  it("admits equivalent mapped spellings through one bucket, concurrently, and other clients separately", async () => {
+    const lim = new IpRateLimiter(0.001, 3);
+    const spellings = ["203.0.113.5", "::ffff:203.0.113.5", "::FFFF:CB00:7105", "0:0:0:0:0:ffff:cb00:7105", "::ffff:cb00:7105"];
+    const admitted = (await Promise.all(spellings.map(async v => lim.allow(key(v))))).filter(Boolean);
+    expect(admitted).toHaveLength(3);
+    expect(lim.allow(key("0:0:0:0:0:ffff:cb00:7106"))).toBe(true);
+    const v6 = ["2001:db8:1:2::1", "2001:db8:1:2:0:0:1.2.3.4", "2001:db8:1:2:aaaa::1", "2001:db8:1:2::9"];
+    expect((await Promise.all(v6.map(async v => lim.allow(key(v))))).filter(Boolean)).toHaveLength(3);
+  });
+});
