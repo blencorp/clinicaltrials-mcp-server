@@ -118,13 +118,13 @@ Quotas stay on in account mode:
   advisory lock (a code exchange per code; the lock follows the operation Better Auth will run:
   form-encoded bodies only, revoke on `token`, refresh on `refresh_token`, code exchange on
   `code`; a repeated deciding field is refused with 400; a request with nothing to lock takes
-  none). These requests use their own pool of `AUTH_LOCK_POOL_SIZE` connections per replica
+  none). These requests use their own pool of `CTGOV_AUTH_LOCK_POOL_SIZE` connections per replica
   (default 10, 2 to 200), in addition to the main pool of 10, so budget
-  `replicas x (10 + AUTH_LOCK_POOL_SIZE)` against PostgreSQL's `max_connections`. A waiting
+  `replicas x (10 + CTGOV_AUTH_LOCK_POOL_SIZE)` against PostgreSQL's `max_connections`. A waiting
   request holds one in an open transaction (`idle in transaction`, with a 10 second
   `lock_timeout`), so do not set a shorter `idle_in_transaction_session_timeout` on the role
-  than that plus the slowest token response. A request that cannot get a lock or a connection
-  within 10 seconds is answered with 503 and `Retry-After`, and the client retries.
+  than that plus the slowest token response. A request that cannot get a connection within 10
+  seconds, or the lock within a further 10, is answered with 503 and `Retry-After`, and the client retries.
 - MCP request bodies are capped at 1 MiB. Cookies are HttpOnly and SameSite, Secure in
   production; responses are non-cacheable.
 

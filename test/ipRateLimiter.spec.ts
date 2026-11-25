@@ -12,15 +12,6 @@ describe("IpRateLimiter", () => {
     expect(lim.allow("5.6.7.8")).toBe(true);
   });
 
-  it("refunds a spent token, up to burst", () => {
-    const lim = new IpRateLimiter(0, 1);
-    expect(lim.allow("1.2.3.4")).toBe(true);
-    lim.refund("1.2.3.4");
-    lim.refund("1.2.3.4");
-    expect(lim.allow("1.2.3.4")).toBe(true);
-    expect(lim.allow("1.2.3.4")).toBe(false);
-  });
-
   it("accepts a zero or extreme refill rate without an invalid cache ttl", () => {
     expect(() => new IpRateLimiter(0, 1)).not.toThrow();
     expect(() => new IpRateLimiter(1e-300, 1e10)).not.toThrow();
@@ -71,6 +62,12 @@ describe("failure budget and /64 bucketing", () => {
     failures.spend("2001:db8:7:7::1");
     expect(failures.available("2001:db8:7:7:5::2")).toBe(false);
     expect(failures.available("2001:db8:7:8::2")).toBe(true);
+  });
+
+  it("unmaps IPv4-mapped addresses whatever their case or spelling", () => {
+    expect(bucketKey("::FFFF:203.0.113.5")).toBe("203.0.113.5");
+    expect(bucketKey("::ffff:cb00:7105")).toBe("203.0.113.5");
+    expect(bucketKey("::FFFF:CB00:7105")).toBe("203.0.113.5");
   });
 
   it("counts an IPv4-mapped address as its IPv4 client", () => {

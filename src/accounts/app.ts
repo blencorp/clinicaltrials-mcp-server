@@ -54,7 +54,8 @@ export type LockTarget = { token: string } | { code: string } | { ambiguous: tru
 export function lockTarget(path: string, contentType: string | undefined, body: Buffer | undefined): LockTarget {
   if ((contentType ?? '').toLowerCase().split(';')[0]!.trim() !== FORM_MEDIA_TYPE) return undefined;
   if (!body) return undefined;
-  const params = new URLSearchParams(body.toString('utf8').replace(/^\uFEFF/, ''));
+  // The leading '&' keeps URLSearchParams from stripping a leading '?', which Better Auth's parser keeps in the first key.
+  const params = new URLSearchParams('&' + body.toString('utf8').replace(/^\uFEFF/, ''));
   const single = (name: string) => {
     const values = params.getAll(name);
     return values.length > 1 ? null : (values[0] ?? undefined);

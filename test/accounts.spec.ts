@@ -47,12 +47,12 @@ describe('account configuration', () => {
   });
 });
 
-describe('AUTH_LOCK_POOL_SIZE', () => {
+describe('CTGOV_AUTH_LOCK_POOL_SIZE', () => {
   it('is optional, an integer from 2 to 200', () => {
     expect(loadAccountConfig(ENV).authLockPoolSize).toBeUndefined();
-    expect(loadAccountConfig({ ...ENV, AUTH_LOCK_POOL_SIZE: '25' }).authLockPoolSize).toBe(25);
+    expect(loadAccountConfig({ ...ENV, CTGOV_AUTH_LOCK_POOL_SIZE: '25' }).authLockPoolSize).toBe(25);
     for (const bad of ['0', '1', '201', 'many', '2.5'])
-      expect(() => loadAccountConfig({ ...ENV, AUTH_LOCK_POOL_SIZE: bad }), bad).toThrow('AUTH_LOCK_POOL_SIZE');
+      expect(() => loadAccountConfig({ ...ENV, CTGOV_AUTH_LOCK_POOL_SIZE: bad }), bad).toThrow('CTGOV_AUTH_LOCK_POOL_SIZE');
   });
 });
 
@@ -72,6 +72,9 @@ describe('token and revoke locks follow the operation Better Auth will run', () 
     expect(target('/oauth2/token', 'grant_type=refresh_token&refresh_token=R', `${form}; charset=utf-8`)).toEqual({ token: 'R' });
     expect(target('/oauth2/token', 'grant_type=+refresh_token+&refresh_token=R')).toEqual({ token: 'R' });
     expect(target('/oauth2/token', 'grant_type=%09authorization_code%0A&code=C')).toEqual({ code: 'C' });
+    // A leading '?' stays in the first key, as in Better Auth's parser, so it is not the field.
+    expect(target('/oauth2/revoke', '?token=R')).toBeUndefined();
+    expect(target('/oauth2/revoke', '?a=1&token=R')).toEqual({ token: 'R' });
     expect(target('/oauth2/revoke', 'token=Bearer+R')).toEqual({ token: 'R' });
     expect(target('/oauth2/revoke', 'token=bearer++R')).toEqual({ token: 'R' });
   });

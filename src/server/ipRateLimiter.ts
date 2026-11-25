@@ -41,14 +41,6 @@ export class IpRateLimiter {
     return ok;
   }
 
-  /** Gives back a token that `allow(ip)` spent, for a request that turned out not to count. */
-  refund(ip: string): void {
-    const key = bucketKey(ip);
-    const b = this.refilled(key);
-    b.tokens = Math.min(this.burst, b.tokens + 1);
-    this.buckets.set(key, b);
-  }
-
   private refilled(ip: string): { tokens: number; updatedAt: number } {
     const now = Date.now();
     const b = this.buckets.get(ip) ?? { tokens: this.burst, updatedAt: now };
@@ -78,7 +70,15 @@ export function clientIp(req: IncomingMessage, trustedHeader?: string): string {
 }
 
 function normalize(ip: string): string {
-  return ip.replace(/^::ffff:/, "");
+  return ip.replace(/^::ffff:/i, "");
+}
+
+/** `::ffff:c000:2a0`, the hex spelling of an IPv4-mapped address, as dotted IPv4. */
+function unmapHex(ip: string): string {
+  const m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(ip);
+  if (!m) return ip;
+  const hi = parseInt(m[1]!, 16), lo = parseInt(m[2]!, 16);
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
 }
 
 /**
@@ -87,7 +87,7 @@ function normalize(ip: string): string {
  * address (what a dual-stack socket reports) is the IPv4 client, not one /64.
  */
 export function bucketKey(ip: string): string {
-  ip = normalize(ip);
+  ip = normalize(unmapHex(ip));
   if (!ip.includes(":") || isIP(ip) !== 6) return ip;
   const [head = "", tail] = ip.split("::");
   const groups = head ? head.split(":") : [];
