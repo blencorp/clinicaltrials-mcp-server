@@ -6,10 +6,9 @@ import { DigestGate } from './digest-gate.js';
 export const ACCESS_TOKEN_LIFETIME_SECONDS = 900;
 /** Tolerated clock difference between replicas. It widens only the cheap rejection bound, never authorization. */
 export const ACCESS_TOKEN_SKEW_SECONDS = 60;
-/** Marks tokens that carry an issuer MAC; anything else is a legacy token (release 1 only). */
-export const ACCESS_TOKEN_PREFIX = 'at1.';
-
 const VERSION = 'at1';
+/** Marks tokens that carry an issuer MAC; anything else is a legacy token (release 1 only). */
+export const ACCESS_TOKEN_PREFIX = `${VERSION}.`;
 /** Waiters per unknown digest: a cold replica refuses the excess of a larger first-use burst with 429. */
 const MAX_WAITERS_PER_DIGEST = 256;
 /** Concurrent database checks for a digest that recently validated; an unknown digest has one. */
