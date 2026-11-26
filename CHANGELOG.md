@@ -5,6 +5,20 @@ from `main` (see CONTRIBUTING.md, "Releasing").
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-26
+
+### Fixed
+- canonicalize IPv6 addresses in linear time (security)
+- derive token lock fields from the runtime form parser and canonicalize IPv6 for limiter keys (security)
+- announce the footer heart once (a11y)
+- unmap IPv4-mapped IPv6 case-insensitively, keep a leading ? in lock parsing, prefix the pool size variable (security)
+- harden account-mode token locks and per-IP limiters (security)
+
+### Changed
+- sign "Built with ❤️ by BLEN" and add a teams call to action
+- keep the Terraform ignore rules after retiring the AWS path
+- retire the AWS path and make .railway/railway.ts the only Railway config (deploy)
+
 ## [0.1.0] - 2026-11-21
 
 First release. Nothing was published before it; the development line was `0.1.0-alpha.0`.
@@ -55,5 +69,6 @@ The changes from that line are listed in [`docs/migration-0.1.md`](./docs/migrat
 - The embedded authorization server and HTTP sessions are removed; the transport is stateless.
 - Node 24 or 26 is required (was Node 20.10 and later).
 
-[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/blencorp/clinicaltrials-mcp-server/releases/tag/v0.1.0
