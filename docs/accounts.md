@@ -114,8 +114,8 @@ authenticated format `at1.<kid>.<issued-at>.<24 random bytes>.<MAC>`: the MAC is
 keyed from `BETTER_AUTH_SECRET` (HKDF with the info string `clinicaltrials-access-token-mac/<kid>`,
 separate per key ID) over the rest of the token. `/mcp/account` admits a token in this order:
 
-1. A value with the `at1.` prefix and a wrong shape, unknown key ID or bad MAC is `401` with no
-   database work, no flood allowance and no in-flight slot. Parsing is strict and the MAC is
+1. A value without the `at1.` prefix, or with it and a wrong shape, unknown key ID or bad MAC, is
+   `401` with no database work, no flood allowance and no in-flight slot. Parsing is strict and the MAC is
    compared in constant time.
 2. A MAC-valid token older than `issued-at + 15 minutes + 60 s` is `401` with no database work. The
    60 s is clock skew for this cheap bound only; the database expiry stays authoritative and never
@@ -152,6 +152,7 @@ Only tokens in the authenticated format are accepted. A bearer token without the
 (including an old-format token that is still stored) is refused at step 1 with `401`: no database
 work, no in-flight slot, no flood allowance. Junk of any shape therefore never touches the `mcp-ip:`
 allowance or the in-flight slots that valid users on a shared address depend on.
+
 Queued requests wait without a shared slot but are not cancelled when their client disconnects; the
 queues are bounded and drain as checks finish.
 
@@ -209,8 +210,8 @@ Quotas stay on in account mode:
   ClinicalTrials.gov publishes no limit, and every caller's requests leave from this server.
 - Fixed: 600 requests/min per IP for browser traffic, 6000/min per IP and 600/min per user on
   `/mcp/account` (the `mcp-ip:` flood guard); at most 256 token checks per IP run at once. Only
-  `at1.` tokens are checked at all (see [bearer token admission](#bearer-token-admission)). Behind a proxy set `CTGOV_CLIENT_IP_HEADER` (Railway:
-  `x-real-ip`). Per-IP limits count an IPv6 address by its /64 and an IPv4-mapped address as its
+  `at1.` tokens are checked at all (see [bearer token admission](#bearer-token-admission)). Behind a
+  proxy set `CTGOV_CLIENT_IP_HEADER` (Railway: `x-real-ip`). Per-IP limits count an IPv6 address by its /64 and an IPv4-mapped address as its
   IPv4 client.
 - `/oauth2/token` and `/oauth2/revoke` are limited per IP in memory (20 a second, bursts of
   600) before any lookup. They then serialize per user with a transaction-scoped PostgreSQL
