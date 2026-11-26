@@ -114,8 +114,8 @@ authenticated format `at1.<kid>.<issued-at>.<24 random bytes>.<MAC>`: the MAC is
 keyed from `BETTER_AUTH_SECRET` (HKDF with the info string `clinicaltrials-access-token-mac/<kid>`,
 separate per key ID) over the rest of the token. `/mcp/account` admits a token in this order:
 
-1. A value with the `at1.` prefix and a wrong shape, unknown key ID or bad MAC is `401` with no
-   database work, no failure budget and no in-flight slot. Parsing is strict and the MAC is
+1. A value without the `at1.` prefix, or with it and a wrong shape, unknown key ID or bad MAC, is
+   `401` with no database work, no flood allowance and no in-flight slot. Parsing is strict and the MAC is
    compared in constant time.
 2. A MAC-valid token older than `issued-at + 15 minutes + 60 s` is `401` with no database work. The
    60 s is clock skew for this cheap bound only; the database expiry stays authoritative and never
@@ -137,8 +137,7 @@ separate per key ID) over the rest of the token. `/mcp/account` admits a token i
    admission bound passes, every queued request is answered `401` at once; if it succeeded, they
    proceed 16 at a time. A later rejection never renews an existing negative entry's expiry.
 6. A running check takes an in-flight slot (256 per IP bucket) and the `mcp-ip:` flood guard
-   (6,000 a minute), and every admitted request still does the full database check. The failed-token
-   budget is neither consulted nor charged.
+   (6,000 a minute), and every admitted request still does the full database check.
 
 So one rejected digest that was never validated costs one lookup per replica while its entry is
 kept (a restart or eviction costs one more). A token validated and then revoked holds at most 16
@@ -148,6 +147,12 @@ flood guard, and they need N real tokens. Revocation is never delayed (only reje
 while a re-enabled client is accepted again within 60 s. The per-IP in-flight cap and the flood
 guard remain shared by everyone on an address: they are sized for connector traffic, and reaching
 them takes sustained load of real tokens, but they are a capacity limit, not something this removes.
+
+Only tokens in the authenticated format are accepted. A bearer token without the `at1.` prefix
+(including an old-format token that is still stored) is refused at step 1 with `401`: no database
+work, no in-flight slot, no flood allowance. Junk of any shape therefore never touches the `mcp-ip:`
+allowance or the in-flight slots that valid users on a shared address depend on.
+
 Queued requests wait without a shared slot but are not cancelled when their client disconnects; the
 queues are bounded and drain as checks finish.
 
@@ -155,33 +160,24 @@ queues are bounded and drain as checks finish.
 
 Only the opaque tokens above go through these checks. Everything else is unchanged:
 
-- `/mcp/account` accepts only tokens its own Better Auth provider issued (`at1.` tokens, and
-  legacy-shaped ones during release 1). A JWT from an external provider is not accepted there; it is
-  treated as a legacy-shaped value and refused after a database miss.
+- `/mcp/account` accepts only tokens its own Better Auth provider issued (`at1.` tokens). A JWT
+  from an external provider is not accepted there; it has no `at1.` prefix and is refused at step 1.
 - The anonymous `/mcp` in account mode reads no token: any `Authorization` header is ignored.
 - Outside account mode, the HTTP transport (`--http`, `CTGOV_AUTH_PROVIDER` of `generic-oidc`,
   `clerk`, `workos` or `auth0`) verifies every bearer as a JWT against the issuer's JWKS, and
   `none` (with `--insecure` or `--public-docs`) and stdio take no bearer. None of these use the
-  `at1.` format, the admission caches or the legacy budget.
+  `at1.` format, the admission caches.
 
 ### Rollout: two releases, no timers
 
-- **Release 1 (dual-accept).** Issues `at1` tokens and accepts both shapes. Legacy-shaped tokens
-  (no `at1.` prefix, issued before this change) use the old failed-token budget (2 credits a
-  second after a burst as large as the legacy in-flight cap, 256 per IP bucket), a separate
-  in-flight cap and the `mcp-ip-legacy:` flood key (6,000 a minute). A credit is reserved before
-  the lookup and refunded unless the token is proven invalid, so concurrent requests cannot share
-  one credit while valid legacy users keep their concurrency. A legacy junk flood cannot consume
-  `at1` capacity; during release 1 one IP can reach up to twice the previous database concurrency
-  (256 on each path). Rolling back to the previous version is safe: it validates by database digest
-  only, and `at1` tokens are opaque strings to it. Record the time the deploy finished, with no
-  rollback, on every replica.
-- **Release 2 (legacy removed).** Rejects legacy-shaped tokens at the first check. It may ship only
-  after release 1 has been fully deployed, with no rollback, for at least `accessTokenExpiresIn +
-  skew` (15 minutes + 60 s), the longest a legacy token issued by the last old instance can still be
-  valid. Legacy removal is a code change, so restarts never reopen it and every replica runs one
-  rule. Rolling back release 2 to release 1 is safe. Refresh tokens are unaffected by either
-  release.
+- **Release 1 (dual-accept)** issued `at1` tokens and still accepted the old format on a separate
+  path. **Release 2** removed that path. It could ship only after release 1 had been fully deployed,
+  with no rollback, for at least `accessTokenExpiresIn + skew` (15 minutes + 60 s), the longest an
+  old-format token issued by the last old instance can still be valid. Removal is a code change, so
+  restarts never reopen it and every replica runs one rule. Refresh tokens are unaffected.
+- **Rollback.** Rolling back release 2 to release 1 is safe, as is rolling back release 1 to the
+  version before it: that version validates by database digest only, and `at1` tokens are opaque
+  strings to it.
 - **Changing `accessTokenExpiresIn`.** The admission bound uses the maximum lifetime of any token
   that may still be valid: when raising or lowering it, keep the larger value in the bound until
   tokens issued under the old setting have expired.
@@ -213,11 +209,9 @@ Quotas stay on in account mode:
 - **Shared upstream gate:** `CTGOV_RATE_PER_SEC` (10) and 8 requests in flight, process-wide:
   ClinicalTrials.gov publishes no limit, and every caller's requests leave from this server.
 - Fixed: 600 requests/min per IP for browser traffic, 6000/min per IP and 600/min per user on
-  `/mcp/account` (the `mcp-ip:` flood guard); at most 256 token checks per IP run at once. Tokens
-  in the `at1.` format have no failure budget (see [bearer token admission](#bearer-token-admission));
-  legacy-shaped tokens (release 1 only) are limited to 2/s per IP after a burst of 256, in their own
-  budget, in-flight cap and flood key. Behind a proxy set `CTGOV_CLIENT_IP_HEADER` (Railway:
-  `x-real-ip`). Per-IP limits count an IPv6 address by its /64 and an IPv4-mapped address as its
+  `/mcp/account` (the `mcp-ip:` flood guard); at most 256 token checks per IP run at once. Only
+  `at1.` tokens are checked at all (see [bearer token admission](#bearer-token-admission)). Behind a
+  proxy set `CTGOV_CLIENT_IP_HEADER` (Railway: `x-real-ip`). Per-IP limits count an IPv6 address by its /64 and an IPv4-mapped address as its
   IPv4 client.
 - `/oauth2/token` and `/oauth2/revoke` are limited per IP in memory (20 a second, bursts of
   600) before any lookup. They then serialize per user with a transaction-scoped PostgreSQL
