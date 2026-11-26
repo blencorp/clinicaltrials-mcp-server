@@ -18,6 +18,8 @@ COPY src ./src
 COPY schema ./schema
 COPY web ./web
 COPY legal ./legal
+# The docs-only landing page reads the hosted docs address from the site's product file.
+COPY site/product.mjs site/product.d.mts ./site/
 RUN pnpm build
 
 # Prune to production-only modules (keeps the prebuilt isolated-vm .node).
