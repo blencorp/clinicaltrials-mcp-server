@@ -25,8 +25,10 @@ sign-in, no account, and nothing to configure.
 
 On the hosted server, code your assistant writes would run on a machine that many people share. To
 keep one person from using up the machine or the API for everyone else, BLEN's server offers only
-the documentation tools. To run queries, use your computer: the server starts there in seconds and
-has no limits beyond ClinicalTrials.gov's own.
+the documentation tools. To run queries, use your computer: the server starts there in seconds, with no
+account and no per-account quota. The server's own limits for one run, and its pace toward
+ClinicalTrials.gov, still apply: see [Limits](#limits) and
+[Tools](/reference/tools/#limits-of-one-run).
 
 If you want to offer `execute` to other people, [host it yourself](/self-host/): put it behind your
 identity provider (OIDC), or turn on account mode, which adds Google sign-in and per-account

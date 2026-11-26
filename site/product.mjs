@@ -20,7 +20,13 @@ export const packageName = '@blen/clinicaltrials-mcp-server';
  * connect pages must not use the install helpers in src/lib/install.ts (they describe connecting
  * to the hosted URL only).
  */
-export const distribution = { npm: true, mcpb: true };
+export const distribution = { npm: false, mcpb: true };
+// `npm` is false until @blen/clinicaltrials-mcp-server has been published for the first time (the
+// owner stages that release by hand; see CONTRIBUTING.md). While it is false, the overview and
+// connect pages show only the Claude Desktop extension, and the self-host page and the README say
+// the `npx` commands wait for publication (test/docs-npm.spec.ts keeps them in step). To flip it
+// after `npm view @blen/clinicaltrials-mcp-server version` works: set it to true and delete the
+// "not yet published" notes (the test names each one).
 /** The key a client config uses for this server (Cursor, VS Code, mcpServers). */
 export const serverName = 'clinicaltrials';
 export const description =

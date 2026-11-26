@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PORTAL_CSP, publicPortalRoute } from '../src/accounts/docs.js';
+import { base as docsBase, site } from '../site/product.mjs';
 import { startHttpServer, type HttpHandle } from '../src/server/http.js';
 
 const BUILT = fileURLToPath(new URL('../dist/web-docs/', import.meta.url));
@@ -86,7 +87,7 @@ describe.skipIf(!built)('the built docs-only portal (needs pnpm build)', () => {
     const home = (await get(base, '/')).body;
     expect(home).toContain('<h1');
     expect(home).toContain('Read the docs');
-    expect(home).toContain('href="/docs/"');
+    expect(home).toContain(`href="${site}${docsBase}/"`);
     expect(home).not.toMatch(/Create an account|Sign in/i);
   });
 

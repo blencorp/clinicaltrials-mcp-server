@@ -1,10 +1,11 @@
 ---
 title: Connect your assistant
-description: Add the server to Claude Desktop, Claude Code, Cursor, VS Code, or Gemini CLI, and what ChatGPT and other remote clients need.
+description: Add the server to Claude Desktop, and, once it is on npm, Claude Code, Cursor, VS Code or Gemini CLI; and what ChatGPT and other remote clients need.
 ---
 
 import { Aside, Code, LinkButton } from '@astrojs/starlight/components';
 import { bundleUrl, claudeCodeCommand, cursorLink, mcpServersJson, vscodeLink } from '../../lib/install';
+import { distribution } from '../../../product.mjs';
 
 The server runs on your computer, and your assistant starts it. Before you connect, install
 [Node.js](https://nodejs.org/) 24.11 or later, or 26. You need no key: see [No key needed](/keys/).
@@ -15,6 +16,9 @@ The server runs on your computer, and your assistant starts it. Before you conne
 
 Open the downloaded `.mcpb` file, or drag it into the Claude Desktop window. Claude Desktop shows
 the extension for review, and then installs it.
+
+{distribution.npm ? (
+<>
 
 To set it up by hand, open **Settings → Developer → Edit Config**, add the server, and restart
 Claude Desktop:
@@ -53,6 +57,19 @@ VS Code documentation.
 Add the server to `~/.gemini/settings.json`, or to `.gemini/settings.json` in one project:
 
 <Code code={mcpServersJson} lang="json" title="settings.json" />
+
+</>
+) : (
+<Aside type="caution" title="Not on npm yet">
+  <p>
+    Cursor, VS Code, Claude Code and Gemini CLI start the server with <code>npx</code>, which works
+    once the package is published to npm. Until then, use the Claude Desktop extension above, or
+    build the server from source (the{' '}
+    <a href="https://github.com/blencorp/clinicaltrials-mcp-server#readme">README</a> shows how)
+    and point your client at the built <code>dist/bin.js</code>.
+  </p>
+</Aside>
+)}
 
 ## ChatGPT and other remote clients
 

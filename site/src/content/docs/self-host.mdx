@@ -3,6 +3,20 @@ title: Self-host
 description: Run the server's HTTP transport for yourself or for other people, with npx, Docker, or Railway, and where the full guides are.
 ---
 
+import { Aside } from '@astrojs/starlight/components';
+import { distribution } from '../../../product.mjs';
+
+{!distribution.npm && (
+<Aside type="caution" title="Not on npm yet">
+  <p>
+    The <code>npx</code> commands below work once the package is published to npm. Until then,
+    build the server from source (see the{' '}
+    <a href="https://github.com/blencorp/clinicaltrials-mcp-server#readme">README</a>) and run{' '}
+    <code>node dist/bin.js</code> with the same options.
+  </p>
+</Aside>
+)}
+
 Remote clients such as ChatGPT, Claude custom connectors, and Gemini Enterprise need an HTTPS
 endpoint. The server has a Streamable HTTP transport for that. Pick the mode by who uses it.
 
@@ -27,27 +41,29 @@ There is no sign-in. The server binds to `127.0.0.1` unless `--host` names anoth
 ## Documentation only
 
 ```bash
-CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
+CTGOV_PUBLIC_ORIGIN='https://your-host.example.com' \
   npx @blen/clinicaltrials-mcp-server --http --public-docs
 ```
 
 `/mcp` is anonymous and offers `search_api` and `describe_schema`. It never runs code and needs
-no database. It serves a landing page, the privacy policy and the terms, and this site at `/docs`,
-and none of them has a sign-in. This is the default command of the Docker image and the mode of
-BLEN's hosted server.
+no database. It serves a landing page, the privacy policy and the terms, none of which has a
+sign-in. The Docker image also serves this site at `/docs` (the npm package does not ship it; the
+landing page then links to the hosted copy). This is the default command of the Docker image and
+the mode of BLEN's hosted server.
 
 ## OIDC
 
 ```bash
 CTGOV_AUTH_PROVIDER=clerk \
-CTGOV_AUTH_ISSUER=https://<tenant>.clerk.accounts.dev \
-CTGOV_AUTH_AUDIENCE=https://your-host.example.com/mcp \
-CTGOV_AUTH_JWKS_URL=https://<tenant>.clerk.accounts.dev/.well-known/jwks.json \
-CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
+CTGOV_AUTH_ISSUER='https://your-tenant.clerk.accounts.dev' \
+CTGOV_AUTH_AUDIENCE='https://your-host.example.com/mcp' \
+CTGOV_AUTH_JWKS_URL='https://your-tenant.clerk.accounts.dev/.well-known/jwks.json' \
+CTGOV_PUBLIC_ORIGIN='https://your-host.example.com' \
   npx @blen/clinicaltrials-mcp-server --http
 ```
 
-The issuer, the audience, and an HTTPS JWKS URL are all required. The provider can be `clerk`,
+Replace `your-tenant.clerk.accounts.dev` with your identity provider's issuer host and
+`your-host.example.com` with the address clients use for your server. The issuer, the audience, and an HTTPS JWKS URL are all required. The provider can be `clerk`,
 `workos`, `auth0`, or `generic-oidc`. Every token needs the `ctgov:read` scope. Then give your
 client the URL `https://your-host.example.com/mcp`.
 
@@ -56,7 +72,7 @@ client the URL `https://your-host.example.com/mcp`.
 Account mode is for a server you run yourself; BLEN's hosted server does not use it. It adds Google sign-in, an account page, and OAuth for MCP clients. `/mcp` stays
 anonymous and documentation-only, and `/mcp/account` runs code for signed-in people. It needs
 `CTGOV_PUBLIC_ORIGIN`, `DATABASE_URL` (PostgreSQL), `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, and
-`GOOGLE_CLIENT_SECRET`, and it serves this site at `/docs`. See the
+`GOOGLE_CLIENT_SECRET`, and, in the Docker image, serves this site at `/docs`. See the
 [account mode guide](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/docs/accounts.md).
 
 ## Docker and Railway

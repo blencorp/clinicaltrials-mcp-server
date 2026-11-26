@@ -1,5 +1,11 @@
 import type { Brand } from '@/components/kit/brand';
+import { base, site } from '../../../site/product.mjs';
 import { brand as accountBrand } from '../brand';
+
+// The documentation site's address, from the one place it is written. The npm package does not ship
+// the built site (only the Docker image does), so a self-hosted docs-only server may have no /docs of
+// its own; the pages link to the hosted copy, which is also correct on the hosted server itself.
+const docs = (path = '') => `${site}${base}/${path}`;
 
 /**
  * The portal as `--public-docs` serves it (build mode `docs-only`, web/vite.config.ts aliases
@@ -12,6 +18,7 @@ export const brand: Brand = {
   ...accountBrand,
   accounts: false,
   accountPurpose: 'run queries from your AI assistant',
+  docsUrl: docs(),
   connect: {
     signInStep: (
       <>
@@ -20,8 +27,10 @@ export const brand: Brand = {
         server on your own computer; the guides explain how.
       </>
     ),
-    guidesHref: accountBrand.connect.guidesHref,
+    guidesHref: docs('connect/'),
   },
+  howItWorksHref: docs('how-it-works/'),
+  sources: accountBrand.sources.map((source) => ({ ...source, href: docs('reference/sdk/') })),
   howItWorks: accountBrand.howItWorks.map((point) =>
     point.title === 'Fair-use limits'
       ? {

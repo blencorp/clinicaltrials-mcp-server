@@ -30,6 +30,8 @@ Instead of bolting on dozens of rigid, narrow tools, it hands the model a small,
 
 **Claude Desktop extension.** Download `clinicaltrials-mcp-server.mcpb` from the [latest release](https://github.com/blencorp/clinicaltrials-mcp-server/releases/latest) and open it. There is nothing to fill in.
 
+> **Not yet published to npm.** `@blen/clinicaltrials-mcp-server` is not on npm yet, so the `npx` commands in this README fail until the first release is published. Until then use the extension above, or build from source (`pnpm install && pnpm build`) and run `node dist/bin.js` with the same options (in an MCP client config, `"command": "node", "args": ["/path/to/dist/bin.js"]`).
+
 **Or with `npx`.** Add the server to your Claude Desktop config (**Settings → Developer → Edit Config**):
 
 ```json
@@ -151,24 +153,28 @@ Every execution is bounded: code 256 KiB, returned value 256 KiB (`ResultTooLarg
 
 ## Self-hosting (remote HTTP)
 
+The `npx` commands below wait for the first npm release (see the note under [Quickstart](#quickstart-claude-desktop)); until then run `node dist/bin.js` from a source build.
+
 ```bash
 # Local, single user, no auth (binds 127.0.0.1 unless --host says otherwise):
 npx @blen/clinicaltrials-mcp-server --http --insecure --port 8080
 
 # Anonymous, docs-only, as BLEN hosts it (search_api + describe_schema, no execute, no sandbox,
-# no database; also serves a landing page, the policies and /docs):
-CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
+# no database; serves a landing page and the policies, and /docs where the docs site is present):
+CTGOV_PUBLIC_ORIGIN='https://your-host.example.com' \
   npx @blen/clinicaltrials-mcp-server --http --public-docs
 
 # Your own server, authenticated via an OIDC issuer.
 # Issuer, audience and an https JWKS URL are all required; Deno must be installed.
 CTGOV_AUTH_PROVIDER=clerk \
-CTGOV_AUTH_ISSUER=https://<tenant>.clerk.accounts.dev \
-CTGOV_AUTH_AUDIENCE=https://your-host.example.com/mcp \
-CTGOV_AUTH_JWKS_URL=https://<tenant>.clerk.accounts.dev/.well-known/jwks.json \
-CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
+CTGOV_AUTH_ISSUER='https://your-tenant.clerk.accounts.dev' \
+CTGOV_AUTH_AUDIENCE='https://your-host.example.com/mcp' \
+CTGOV_AUTH_JWKS_URL='https://your-tenant.clerk.accounts.dev/.well-known/jwks.json' \
+CTGOV_PUBLIC_ORIGIN='https://your-host.example.com' \
   npx @blen/clinicaltrials-mcp-server --http
 ```
+
+Replace `your-tenant.clerk.accounts.dev` with your identity provider's issuer host and `your-host.example.com` with the address clients use for your server. The Docker image carries the documentation site and serves it at `/docs`; the npm package does not, so there the landing page links to the hosted copy.
 
 Then point any MCP client at it:
 
