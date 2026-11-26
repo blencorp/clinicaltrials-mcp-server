@@ -217,7 +217,7 @@ Every environment variable the server reads (`src/bin.ts`, plus the log level) a
 | `CTGOV_IP_RPS` / `CTGOV_IP_BURST` | `5` / `20` | Per-IP token bucket on the HTTP transport. |
 | `CTGOV_CLIENT_IP_HEADER` | unset | Header your proxy overwrites with the client address (Railway: `x-real-ip`). Unset keys the limiter on the TCP peer. |
 | `DATABASE_URL` | none | Account mode: a dedicated PostgreSQL database. |
-| `BETTER_AUTH_SECRET` | none | Account mode: a random secret of at least 32 characters. |
+| `BETTER_AUTH_SECRET` | none | Account mode: a random secret of at least 32 characters, shared by every replica. Changing it forces every connection and confidential client to re-authorize (see [secret rotation](docs/accounts.md#secret-rotation)). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | Account mode: Google OAuth web application (redirect URI `https://<origin>/api/auth/callback/google`). |
 | `CTGOV_AUTH_LOCK_POOL_SIZE` | `10` | Account mode: connections (2 to 200) reserved per replica for OAuth token locks, in addition to the main pool; see [docs/accounts.md](docs/accounts.md). |
 | `CTGOV_SUBJECT_DAILY_QUOTA` | `10000` | Account mode: MCP requests per account per UTC day. |
