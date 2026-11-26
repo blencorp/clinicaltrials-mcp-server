@@ -117,7 +117,8 @@ export function isPublicPortalPath(path: string): boolean {
  * pages because that server has no sessions. Undefined when it is not built (`pnpm build:web`).
  */
 export function publicPortalRoute(root: string): express.Router | undefined {
-  if (!existsSync(join(root, 'index.html'))) return undefined;
+  // Every page must be there: a partial build would otherwise throw at startup, in readFileSync below.
+  if (!Object.values(PUBLIC_PORTAL_PAGES).every((file) => existsSync(join(root, file)))) return undefined;
   const pages = new Map(Object.entries(PUBLIC_PORTAL_PAGES).map(([path, file]) => [path, readFileSync(join(root, file), 'utf8')]));
   return express
     .Router()

@@ -265,11 +265,11 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
   // The documentation site, served by the anonymous docs-only server like account mode serves it.
   // Static and public; the handler sets its own CSP, caching and 404 page (accounts/docs.ts).
   const docsRouter = publicDocs ? docsRoute(opts.docsRoot ?? fileURLToPath(new URL("../../docs-site/", import.meta.url))) : undefined;
-  const staticFailed = (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    logger.error("http.docs_failed", { err: err instanceof Error ? { name: err.name, message: truncate(err.message) } : String(err) });
+  const staticFailed = (event: string) => (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    logger.error(event, { err: err instanceof Error ? { name: err.name, message: truncate(err.message) } : String(err) });
     if (!res.headersSent) res.status(500).type("text/plain").send("internal error");
   };
-  const docsApp = docsRouter ? express().disable("x-powered-by").use(DOCS_PATH, docsRouter).use(staticFailed) : undefined;
+  const docsApp = docsRouter ? express().disable("x-powered-by").use(DOCS_PATH, docsRouter).use(staticFailed("http.docs_failed")) : undefined;
 
   // The landing page and policies of the docs-only portal. It has no sign-in: this mode has no sessions.
   const portalRouter = publicDocs ? publicPortalRoute(opts.portalRoot ?? fileURLToPath(new URL("../../dist/web-docs/", import.meta.url))) : undefined;
@@ -278,7 +278,7 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
         .disable("x-powered-by")
         .use(portalRouter)
         .use((req, res) => { res.status(404).json({ error: "not_found", path: req.path }); })
-        .use(staticFailed)
+        .use(staticFailed("http.portal_failed"))
     : undefined;
 
   let ownOrigin = "";

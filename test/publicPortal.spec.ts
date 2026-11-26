@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PORTAL_CSP } from '../src/accounts/docs.js';
+import { PORTAL_CSP, publicPortalRoute } from '../src/accounts/docs.js';
 import { startHttpServer, type HttpHandle } from '../src/server/http.js';
 
 const BUILT = fileURLToPath(new URL('../dist/web-docs/', import.meta.url));
@@ -96,5 +96,17 @@ describe.skipIf(!built)('the built docs-only portal (needs pnpm build)', () => {
     expect(r.status).toBe(200);
     expect(r.body).toContain('<main');
     expect(r.body.match(/href="[^"]*"/g)?.filter((h) => /\/(sign-in|account|consent)\b|mcp\/account/.test(h))).toEqual([]);
+  });
+});
+
+describe('--public-docs portal with a partial build', () => {
+  it('is skipped, not a startup crash, when a page is missing', () => {
+    const partial = mkdtempSync(join(tmpdir(), 'ctgov-portal-partial-'));
+    try {
+      writeFileSync(join(partial, 'index.html'), '<html><title>Landing</title></html>');
+      expect(publicPortalRoute(partial)).toBeUndefined();
+    } finally {
+      rmSync(partial, { recursive: true, force: true });
+    }
   });
 });

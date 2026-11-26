@@ -22,7 +22,6 @@ from `main` (see CONTRIBUTING.md, "Releasing").
 ## [0.1.0] - 2026-11-21
 
 First release. Nothing was published before it; the development line was `0.1.0-alpha.0`.
-The changes from that line are listed in [`docs/migration-0.1.md`](./docs/migration-0.1.md).
 
 ### Added
 
