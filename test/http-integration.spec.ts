@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SignJWT, exportJWK, generateKeyPair, type CryptoKey, type JWK } from "jose";
 import { startHttpServer, MAX_REQUEST_BODY_BYTES, type HttpHandle, type HttpServerOptions } from "../src/server/http.js";
 import { MCP_PROTOCOL_VERSION } from "../src/server/mcpServer.js";
+import { AccessTokenFormat } from "../src/accounts/token-admission.js";
 import { DenoRunner } from "../src/sandbox/deno.js";
 import { IsolateRunner } from "../src/sandbox/isolate.js";
 import { constantUpstream, type FakeUpstream } from "./characterization/helpers.js";
@@ -119,6 +120,14 @@ describe("anonymous endpoint (--insecure) in both protocol eras", () => {
     }
     expect(result.ttlMs).toBe(300_000);
     expect(result.cacheScope).toBe("public");
+  });
+
+  it("reads no bearer at all: an access-token-shaped value or a JWT is ignored, not checked", async () => {
+    const lookalike = new AccessTokenFormat("s".repeat(40)).generate();
+    for (const token of [lookalike, "eyJhbGciOiJFUzI1NiJ9.e30.c2ln", "at1.junk"]) {
+      const r = await rpc(base, "tools/list", {}, { headers: { authorization: `Bearer ${token}` } });
+      expect(r.status, token.slice(0, 12)).toBe(200);
+    }
   });
 
   it("modern era: server/discover names the server and the supported revision", async () => {
@@ -492,6 +501,15 @@ describe("bearer-token enforcement (OIDC, real ES256 tokens from a local issuer)
   it("keeps verifier details out of the response", async () => {
     const r = await post(`${base}/mcp`, "{}", { authorization: `Bearer ${await sign(good(), { key: otherKey })}` });
     expect(r.raw).toBe("invalid bearer token");
+  });
+
+  it("verifies every bearer as a JWT: an access-token-shaped value gets no special path, and real tokens are unaffected by it", async () => {
+    // The account-mode `at1.` token format belongs to the account server's own OAuth provider only.
+    const lookalike = new AccessTokenFormat("s".repeat(40)).generate();
+    const rejected = await list(lookalike);
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get("www-authenticate")).toBe(`Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`);
+    expect((await list(await sign(good({ scope: "ctgov:read ctgov:extra" })))).status).toBe(200);
   });
 });
 

@@ -9,6 +9,14 @@ import { type Store } from './store.js';
 import { createAuth, initializeAuth, type Auth } from './provider.js';
 import { installPortal } from './portal.js';
 import { digest } from './crypto.js';
+import {
+  ACCESS_TOKEN_LIFETIME_SECONDS,
+  ACCESS_TOKEN_PREFIX,
+  ACCESS_TOKEN_SKEW_SECONDS,
+  AccessTokenFormat,
+  Slots,
+  TokenAdmission,
+} from './token-admission.js';
 import { logger as log } from '../util/logger.js';
 import { IpRateLimiter, bucketKey, clientIp } from '../server/ipRateLimiter.js';
 import { stripAccessTokenAuthorizationScheme } from 'better-auth/oauth2';
@@ -34,8 +42,14 @@ const CORS_ALLOW_HEADERS =
 
 /** Longest a token or revoke request waits for a lock connection, and then for the lock. */
 const DEFAULT_LOCK_WAIT_MS = 10_000;
-/** Most /mcp/account token checks in flight per address, so concurrency cannot dodge the failure budget. */
+/** Failed legacy bearer checks per address: 2 each second after a burst as large as the legacy in-flight cap. */
+const FAILED_TOKEN_RPS = 2;
+/** Most /mcp/account at1 token checks in flight per address, so concurrency cannot dodge the admission checks. */
 const MAX_TOKEN_CHECKS_IN_FLIGHT = 256;
+/** Release 1 only: legacy-shaped tokens have their own in-flight cap and flood key, sized like the at1 path. */
+const MAX_LEGACY_CHECKS_IN_FLIGHT = 256;
+/** Per-IP flood allowance (a minute) for each admission path; the keys are separate. */
+const MCP_FLOOD_PER_MINUTE = 6000;
 /** Token and revoke requests per address: 20 each second, bursts of 600. */
 const TOKEN_REQUEST_RPS = 20;
 const TOKEN_REQUEST_BURST = 600;
@@ -168,6 +182,10 @@ export async function createAccountApp(
     tokenRequestLimit?: { rps: number; burst: number };
     /** Most token checks in flight per address on /mcp/account (tests shrink it). */
     maxTokenChecksInFlight?: number;
+    /** Most legacy-shaped token checks in flight per address on /mcp/account (tests shrink it). */
+    maxLegacyChecksInFlight?: number;
+    /** Reads the clock for token issue and admission; tests control it. */
+    now?: () => number;
   } = {},
 ): Promise<{ app: express.Express; auth: Auth; mcp: ReturnType<typeof createMcpHandler>; close: () => Promise<void> }> {
   const app = express();
@@ -180,7 +198,9 @@ export async function createAccountApp(
   const ipOf = (req: express.Request) => config.clientIpHeader ? clientIp(req, config.clientIpHeader) : req.ip;
   // What limits count by: an IPv6 address shares a bucket with its /64 (see bucketKey).
   const limitKey = (req: express.Request) => bucketKey(ipOf(req) ?? 'unknown');
-  const auth = createAuth(config, store);
+  // One clock for the issue time written into access tokens and the admission deadline read from them.
+  const now = options.now ?? Date.now;
+  const auth = createAuth(config, store, now);
   await initializeAuth(auth, config, store);
   // Each waiting token request holds a connection, so size this for concurrent token requests;
   // a bounded wait (below) keeps one stuck request from holding them all.
@@ -336,10 +356,20 @@ export async function createAccountApp(
       return res.status(403).json({ error: 'origin_not_allowed' });
     await publicNode(req, res);
   });
-  // Failed token checks per address (2 each second, bursts of 120): enough for the expired tokens
-  // of many users behind one connector IP, far below the flood guard's 100 each second.
-  const failedTokens = new IpRateLimiter(2, 120);
-  const tokenChecks = new Map<string, number>();
+  // Release 1 (dual-accept). Tokens issued by this server carry a MAC and are admitted without the
+  // failed-token budget (token-admission.ts). Legacy-shaped tokens keep today's budget, applied only to
+  // them, with their own in-flight cap and flood key, so legacy junk cannot touch `at1` capacity.
+  // Release 2 deletes the legacy branch.
+  const admission = new TokenAdmission(
+    new AccessTokenFormat(config.authSecret, ACCESS_TOKEN_LIFETIME_SECONDS, ACCESS_TOKEN_SKEW_SECONDS, now),
+    { now },
+  );
+  const tokenSlots = new Slots(options.maxTokenChecksInFlight ?? MAX_TOKEN_CHECKS_IN_FLIGHT);
+  const maxLegacyChecks = options.maxLegacyChecksInFlight ?? MAX_LEGACY_CHECKS_IN_FLIGHT;
+  const legacySlots = new Slots(maxLegacyChecks);
+  // The legacy path's own failure budget, as large as its in-flight cap so valid legacy users keep the
+  // concurrency they had; junk still spends credits at 2 a second once the burst is used.
+  const failedTokens = new IpRateLimiter(FAILED_TOKEN_RPS, maxLegacyChecks);
   // Looking up the presented token costs database queries before any lock, and these routes skip
   // the page limiter, so each address gets a bounded budget sized for refresh traffic from a
   // connector's shared egress IP (Better Auth's own token limit is 1200 a minute).
@@ -362,53 +392,69 @@ export async function createAccountApp(
     const value = authorization && authorization.length <= 4096 ? bearerToken(authorization) : undefined;
     if (!value) return challenge(401, 'invalid_token');
     const ip = limitKey(req);
-    // Any bearer value skips the per-IP limit above, so tokens that fail the checks below are
-    // limited here, in memory: past the limit a made-up token costs no database round trip.
-    // Only a token proven invalid spends the budget (a valid one, a database error or another
-    // limit does not), and a cap on checks in flight bounds what concurrent requests can do
-    // before their failures are counted.
-    if (!failedTokens.available(ip) || (tokenChecks.get(ip) ?? 0) >= (options.maxTokenChecksInFlight ?? MAX_TOKEN_CHECKS_IN_FLIGHT))
-      return tooMany(res);
-    const rejected = () => {
-      failedTokens.spend(ip);
-      return challenge(401, 'invalid_token');
+    const LIMITED = Symbol('limited');
+    // Slot cap, flood guard, then the database check; undefined means proven invalid. Opaque tokens are
+    // checked against their hashed database row on every request, so revocation, client disabling, user
+    // deletion and loss of email verification apply immediately.
+    const lookup = async (slots: Slots, floodKey: string) => {
+      if (!slots.take(ip)) return LIMITED;
+      try {
+        // A flood guard sized for a connector's shared IP; the per-user limit below does the real work.
+        if (!(await store.allow(`${floodKey}:${ip}`, MCP_FLOOD_PER_MINUTE, 60))) return LIMITED;
+        const context = await auth.$context;
+        const token = await context.adapter.findOne<AccessTokenRow>({
+          model: 'oauthAccessToken',
+          where: [{ field: 'token', value: digest(value) }],
+        });
+        if (
+          !token?.userId ||
+          token.revoked ||
+          !(new Date(token.expiresAt).getTime() > now()) ||
+          !(token.resources ?? []).includes(resource)
+        )
+          return undefined;
+        const [client, user] = await Promise.all([
+          context.adapter.findOne<{ disabled?: boolean | null }>({
+            model: 'oauthClient',
+            where: [{ field: 'clientId', value: token.clientId }],
+          }),
+          context.adapter.findOne<{ id: string; emailVerified?: boolean | null }>({
+            model: 'user',
+            where: [{ field: 'id', value: token.userId }],
+          }),
+        ]);
+        return client && !client.disabled && user?.emailVerified ? { token, user } : undefined;
+      } finally {
+        slots.release(ip);
+      }
     };
-    tokenChecks.set(ip, (tokenChecks.get(ip) ?? 0) + 1);
-    const checked = await (async () => {
-      // A flood guard sized for a connector's shared IP; the per-user limit below does the real work.
-      if (!(await store.allow(`mcp-ip:${ip}`, 6000, 60))) return void tooMany(res);
-      // Opaque tokens are checked against their hashed database row on every request, so
-      // revocation, client disabling, user deletion and loss of email verification apply immediately.
-      const context = await auth.$context;
-      const token = await context.adapter.findOne<AccessTokenRow>({
-        model: 'oauthAccessToken',
-        where: [{ field: 'token', value: digest(value) }],
-      });
-      if (
-        !token?.userId ||
-        token.revoked ||
-        !(new Date(token.expiresAt).getTime() > Date.now()) ||
-        !(token.resources ?? []).includes(resource)
-      )
-        return void rejected();
-      const [client, user] = await Promise.all([
-        context.adapter.findOne<{ disabled?: boolean | null }>({
-          model: 'oauthClient',
-          where: [{ field: 'clientId', value: token.clientId }],
-        }),
-        context.adapter.findOne<{ id: string; emailVerified?: boolean | null }>({
-          model: 'user',
-          where: [{ field: 'id', value: token.userId }],
-        }),
-      ]);
-      if (!client || client.disabled || !user?.emailVerified) return void rejected();
-      return { token, user };
-    })().finally(() => {
-      const left = (tokenChecks.get(ip) ?? 1) - 1;
-      if (left > 0) tokenChecks.set(ip, left);
-      else tokenChecks.delete(ip);
-    });
-    if (!checked) return;
+    let checked: Awaited<ReturnType<typeof lookup>>;
+    if (value.startsWith(ACCESS_TOKEN_PREFIX)) {
+      const admitted = await admission.admit(value);
+      if (admitted.kind === 'invalid') return challenge(401, 'invalid_token');
+      if (admitted.kind === 'busy') return tooMany(res);
+      try {
+        checked = await lookup(tokenSlots, 'mcp-ip');
+        // Only completed checks are remembered (rejections for 401s, successes as a routing hint); limits and errors are not.
+        if (checked === undefined) admitted.reject();
+        else if (checked !== LIMITED) admitted.validated();
+      } finally {
+        admitted.release();
+      }
+    } else {
+      // A credit is reserved before the lookup, so concurrent requests cannot share one; it is
+      // refunded unless the token is proven invalid.
+      if (!failedTokens.allow(ip)) return tooMany(res);
+      let invalid = false;
+      try {
+        checked = await lookup(legacySlots, 'mcp-ip-legacy');
+        invalid = checked === undefined;
+      } finally {
+        if (!invalid) failedTokens.refund(ip);
+      }
+    }
+    if (checked === LIMITED) return tooMany(res);
+    if (!checked) return challenge(401, 'invalid_token');
     const { token, user } = checked;
     if (!(token.scopes ?? []).includes('ctgov:read')) return challenge(403, 'insufficient_scope');
     if (!(await store.allow(`mcp-user:${user.id}`, 600, 60))) return tooMany(res);

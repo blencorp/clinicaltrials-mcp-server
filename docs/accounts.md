@@ -80,7 +80,7 @@ Use a **dedicated** PostgreSQL database. Set in the deployment secret manager:
 - `CTGOV_AUTH_PROVIDER=accounts`
 - `CTGOV_PUBLIC_ORIGIN=https://your-host.example.com` (the origin clients use)
 - `DATABASE_URL`
-- `BETTER_AUTH_SECRET`: a random secret of at least 32 characters
+- `BETTER_AUTH_SECRET`: a random secret of at least 32 characters, the same on every replica. It also keys the access-token MAC and encrypts confidential-client secrets, so changing it forces every connection and confidential client to re-authorize (see [secret rotation](#secret-rotation))
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
 
 Configure the Google OAuth web application's redirect URI as
@@ -102,7 +102,101 @@ origin, and assumes one trusted proxy hop, as on Railway.
   right resource, the `ctgov:read` scope, a current verified user and an enabled client.
 - Every `/mcp/account` request rechecks the opaque token in PostgreSQL, so revocation takes
   effect immediately. Access tokens last 15 minutes; refresh tokens 30 days.
+- Access tokens carry an issuer MAC, so `/mcp/account` refuses made-up ones without database work
+  (see [bearer token admission](#bearer-token-admission)).
 - Token requests are serialized per user with a PostgreSQL advisory lock.
+
+## Bearer token admission
+
+Hosted connectors share a few egress IPs, so one client sending bad bearer tokens must not lock
+valid users out of an address. Access tokens issued by this server's own OAuth provider have the
+authenticated format `at1.<kid>.<issued-at>.<24 random bytes>.<MAC>`: the MAC is an HMAC-SHA256
+keyed from `BETTER_AUTH_SECRET` (HKDF with the info string `clinicaltrials-access-token-mac/<kid>`,
+separate per key ID) over the rest of the token. `/mcp/account` admits a token in this order:
+
+1. A value with the `at1.` prefix and a wrong shape, unknown key ID or bad MAC is `401` with no
+   database work, no failure budget and no in-flight slot. Parsing is strict and the MAC is
+   compared in constant time.
+2. A MAC-valid token older than `issued-at + 15 minutes + 60 s` is `401` with no database work. The
+   60 s is clock skew for this cheap bound only; the database expiry stays authoritative and never
+   gains the skew.
+3. A digest whose completed database check was rejected (revoked, no row, wrong resource, disabled
+   client, unverified user) is remembered for at most 60 s, a fixed time that hits never extend, and
+   never beyond the admission bound of step 2. The cache holds 10,000 digests, never holds database
+   errors or limit responses, and is per replica.
+4. A digest whose own database check recently succeeded carries a "recently validated" marker, set
+   or renewed by each such success (expiry 60 s from then), with the same cap at the admission bound
+   and the same 10,000-entry bound. It is a routing hint, not an authorization result: every request
+   still runs its own database check, and a rejection deletes the marker.
+5. Per digest and replica, one check runs at a time for an unknown digest and at most 16 for a
+   marked one, and only running checks take shared in-flight slots (step 6). Further requests for
+   the digest queue FIFO, holding no slot: up to 256 per digest and 4,096 overall, then `429` with
+   `Retry-After` (a known cap: a cold replica serving more than 257 simultaneous first-use calls
+   with one token refuses the excess). When a check finishes, its permit passes directly to the
+   oldest queued request, each running its own fresh check. If the digest was rejected, or its
+   admission bound passes, every queued request is answered `401` at once; if it succeeded, they
+   proceed 16 at a time. A later rejection never renews an existing negative entry's expiry.
+6. A running check takes an in-flight slot (256 per IP bucket) and the `mcp-ip:` flood guard
+   (6,000 a minute), and every admitted request still does the full database check. The failed-token
+   budget is neither consulted nor charged.
+
+So one rejected digest that was never validated costs one lookup per replica while its entry is
+kept (a restart or eviction costs one more). A token validated and then revoked holds at most 16
+slots until its first rejection is recorded, and none after. Residual: N distinct
+validated-then-revoked tokens can hold up to 16 x N slots, bounded by the in-flight cap and the
+flood guard, and they need N real tokens. Revocation is never delayed (only rejections are cached),
+while a re-enabled client is accepted again within 60 s. The per-IP in-flight cap and the flood
+guard remain shared by everyone on an address: they are sized for connector traffic, and reaching
+them takes sustained load of real tokens, but they are a capacity limit, not something this removes.
+Queued requests wait without a shared slot but are not cancelled when their client disconnects; the
+queues are bounded and drain as checks finish.
+
+### Bearer types
+
+Only the opaque tokens above go through these checks. Everything else is unchanged:
+
+- `/mcp/account` accepts only tokens its own Better Auth provider issued (`at1.` tokens, and
+  legacy-shaped ones during release 1). A JWT from an external provider is not accepted there; it is
+  treated as a legacy-shaped value and refused after a database miss.
+- The anonymous `/mcp` in account mode reads no token: any `Authorization` header is ignored.
+- Outside account mode, the HTTP transport (`--http`, `CTGOV_AUTH_PROVIDER` of `generic-oidc`,
+  `clerk`, `workos` or `auth0`) verifies every bearer as a JWT against the issuer's JWKS, and
+  `none` (with `--insecure` or `--public-docs`) and stdio take no bearer. None of these use the
+  `at1.` format, the admission caches or the legacy budget.
+
+### Rollout: two releases, no timers
+
+- **Release 1 (dual-accept).** Issues `at1` tokens and accepts both shapes. Legacy-shaped tokens
+  (no `at1.` prefix, issued before this change) use the old failed-token budget (2 credits a
+  second after a burst as large as the legacy in-flight cap, 256 per IP bucket), a separate
+  in-flight cap and the `mcp-ip-legacy:` flood key (6,000 a minute). A credit is reserved before
+  the lookup and refunded unless the token is proven invalid, so concurrent requests cannot share
+  one credit while valid legacy users keep their concurrency. A legacy junk flood cannot consume
+  `at1` capacity; during release 1 one IP can reach up to twice the previous database concurrency
+  (256 on each path). Rolling back to the previous version is safe: it validates by database digest
+  only, and `at1` tokens are opaque strings to it. Record the time the deploy finished, with no
+  rollback, on every replica.
+- **Release 2 (legacy removed).** Rejects legacy-shaped tokens at the first check. It may ship only
+  after release 1 has been fully deployed, with no rollback, for at least `accessTokenExpiresIn +
+  skew` (15 minutes + 60 s), the longest a legacy token issued by the last old instance can still be
+  valid. Legacy removal is a code change, so restarts never reopen it and every replica runs one
+  rule. Rolling back release 2 to release 1 is safe. Refresh tokens are unaffected by either
+  release.
+- **Changing `accessTokenExpiresIn`.** The admission bound uses the maximum lifetime of any token
+  that may still be valid: when raising or lowering it, keep the larger value in the bound until
+  tokens issued under the old setting have expired.
+
+Deploy prerequisite: all replicas must share `BETTER_AUTH_SECRET` (they already must), because the
+MAC key derives from it; a replica with a different secret refuses other replicas' tokens.
+
+### Secret rotation
+
+Rotating `BETTER_AUTH_SECRET` is breaking, as it was before access-token MACs: confidential
+clients' secrets are stored encrypted with it (`storeClientSecret: 'encrypted'`), so their refresh
+fails with `invalid_client` until they re-register or re-authorize, and every outstanding access
+token stops verifying and is refused. Plan a re-authorization of confidential clients and of all
+connections. A supported key-ring rotation (old and new secrets side by side, key-ID overlap for
+the MAC, client-secret re-encryption) is not implemented.
 
 ## Limits
 
@@ -119,11 +213,12 @@ Quotas stay on in account mode:
 - **Shared upstream gate:** `CTGOV_RATE_PER_SEC` (10) and 8 requests in flight, process-wide:
   ClinicalTrials.gov publishes no limit, and every caller's requests leave from this server.
 - Fixed: 600 requests/min per IP for browser traffic, 6000/min per IP and 600/min per user on
-  `/mcp/account`; failed token checks are limited to 2/s per IP (bursts of 120) before they
-  reach the database; only a token proven invalid spends that budget (valid tokens, database
-  errors and other limits do not), and at most 256 checks per IP run at once. Behind a proxy
-  set `CTGOV_CLIENT_IP_HEADER` (Railway: `x-real-ip`). Per-IP limits count an IPv6 address by
-  its /64 and an IPv4-mapped address as its IPv4 client.
+  `/mcp/account` (the `mcp-ip:` flood guard); at most 256 token checks per IP run at once. Tokens
+  in the `at1.` format have no failure budget (see [bearer token admission](#bearer-token-admission));
+  legacy-shaped tokens (release 1 only) are limited to 2/s per IP after a burst of 256, in their own
+  budget, in-flight cap and flood key. Behind a proxy set `CTGOV_CLIENT_IP_HEADER` (Railway:
+  `x-real-ip`). Per-IP limits count an IPv6 address by its /64 and an IPv4-mapped address as its
+  IPv4 client.
 - `/oauth2/token` and `/oauth2/revoke` are limited per IP in memory (20 a second, bursts of
   600) before any lookup. They then serialize per user with a transaction-scoped PostgreSQL
   advisory lock (a code exchange per code; the lock follows the operation Better Auth will run:

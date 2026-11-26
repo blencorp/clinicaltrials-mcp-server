@@ -39,12 +39,16 @@ describe("clientIp", () => {
 });
 
 describe("failure budget and /64 bucketing", () => {
-  it("available() spends nothing, spend() floors at zero", () => {
-    const lim = new IpRateLimiter(0, 3);
-    for (let i = 0; i < 5; i++) expect(lim.available("1.2.3.4")).toBe(true);
-    for (let i = 0; i < 10; i++) lim.spend("1.2.3.4");
-    expect(lim.available("1.2.3.4")).toBe(false);
-    expect(lim.available("5.6.7.8")).toBe(true);
+  it("reservations are atomic and refunds never exceed the burst", () => {
+    const lim = new IpRateLimiter(0.001, 2);
+    // Concurrent callers each reserve before doing work: two credits admit exactly two.
+    expect([1, 2, 3, 4].map(() => lim.allow("1.2.3.4"))).toEqual([true, true, false, false]);
+    lim.refund("1.2.3.4");
+    expect(lim.allow("1.2.3.4")).toBe(true);
+    expect(lim.allow("1.2.3.4")).toBe(false);
+    for (let i = 0; i < 5; i++) lim.refund("1.2.3.4");
+    expect([1, 2, 3].map(() => lim.allow("1.2.3.4"))).toEqual([true, true, false]);
+    expect(lim.allow("5.6.7.8")).toBe(true);
   });
 
   it("counts an IPv6 address by its /64, in every method", () => {
@@ -59,9 +63,11 @@ describe("failure budget and /64 bucketing", () => {
     expect(lim.allow("2001:db8:1:2:1:2:3:4")).toBe(false);
     expect(lim.allow("2001:db8:1:3::1")).toBe(true);
     const failures = new IpRateLimiter(0.001, 1);
-    failures.spend("2001:db8:7:7::1");
-    expect(failures.available("2001:db8:7:7:5::2")).toBe(false);
-    expect(failures.available("2001:db8:7:8::2")).toBe(true);
+    expect(failures.allow("2001:db8:7:7::1")).toBe(true);
+    expect(failures.allow("2001:db8:7:7:5::2")).toBe(false);
+    failures.refund("2001:db8:7:7:9::3");
+    expect(failures.allow("2001:db8:7:7:5::2")).toBe(true);
+    expect(failures.allow("2001:db8:7:8::2")).toBe(true);
   });
 
   it("unmaps IPv4-mapped addresses whatever their case or spelling", () => {

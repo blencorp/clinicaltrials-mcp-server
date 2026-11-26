@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
-import { createServer, get as httpGet, type Server } from 'node:http';
+import { Agent, createServer, get as httpGet, request as httpRequest, type Server } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { randomToken, digest } from '../src/accounts/crypto.js';
 import { Store } from '../src/accounts/store.js';
 import { createAccountApp, allowedRedirect, lockTarget } from '../src/accounts/app.js';
+import { AccessTokenFormat } from '../src/accounts/token-admission.js';
 import { accountDependencies, publicDependencies, AccountQuota } from '../src/accounts/runtime.js';
 import { loadAccountConfig, type AccountConfig } from '../src/accounts/config.js';
 import { buildSupervisor, type SupervisorConfig } from '../src/supervisor/index.js';
@@ -127,6 +128,8 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
   let alice: any, bob: any, browser: typeof fetch, other: typeof fetch;
   const schema = `ctgov_test_${randomBytes(8).toString('hex')}`;
   let mock: MockAgent;
+  /** Issues and verifies tokens like the server does (same secret), for forging MAC-valid ones. */
+  let accessTokens: AccessTokenFormat;
   // The quota is low enough to reach in a test; everything else is a production default.
   const HOURLY = 5;
   const cfg: SupervisorConfig = supervisorCfg({ sandbox: 'deno', processIsolation: true, tools: 'all' });
@@ -146,16 +149,17 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     for (const [k, v] of params) if (k === 'sig' || k === 'ba_param' || names.has(k)) out.append(k, v);
     return out.toString();
   }
-  async function register() {
+  async function register(overrides: Record<string, unknown> = {}) {
     const response = await send(fetch, '/api/auth/oauth2/register', {
       client_name: 'Test assistant', redirect_uris: ['https://client.example/callback'],
       token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
+      ...overrides,
     });
     expect(response.status, await response.clone().text()).toBe(201);
     return await response.json() as any;
   }
-  async function beginAuthorization(clientBrowser = browser) {
-    const client = await register();
+  async function beginAuthorization(clientBrowser = browser, registration: Record<string, unknown> = {}) {
+    const client = await register(registration);
     const verifier = randomToken();
     const state = randomToken();
     const query = new URLSearchParams({
@@ -175,8 +179,8 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     expect(new URL(response.url).pathname).toBe('/consent');
     return { client, verifier, state, oauth_query: signedQuery(response.url) };
   }
-  async function authorize(clientBrowser = browser, accept = true) {
-    const { client, verifier, state, oauth_query } = await beginAuthorization(clientBrowser);
+  async function authorize(clientBrowser = browser, accept = true, registration: Record<string, unknown> = {}) {
+    const { client, verifier, state, oauth_query } = await beginAuthorization(clientBrowser, registration);
     const info = await clientBrowser(`${config.origin}/api/portal/consent?oauth_query=${encodeURIComponent(oauth_query)}`);
     expect(info.status).toBe(200);
     const consent = await send(clientBrowser, '/api/portal/consent', { oauth_query, accept });
@@ -221,6 +225,7 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     config = { origin: `http://127.0.0.1:${(server.address() as any).port}`, production: false,
       databaseUrl: database!, authSecret: randomToken(), googleClientId: 'fixture-google', googleClientSecret: 'fixture-secret',
       clientIpHeader: 'x-real-ip', docsRoot };
+    accessTokens = new AccessTokenFormat(config.authSecret);
     // Upstream ClinicalTrials.gov calls go through an injected MockAgent, never the global dispatcher.
     mock = new MockAgent(); mock.disableNetConnect();
     const deps = supervisorDeps = await buildSupervisor({ ...cfg, dispatcher: mock });
@@ -457,11 +462,13 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     const bucket = async (key: string) => (await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(key)])).rows[0]?.count;
     for (const ip of ['203.0.113.5', '203.0.113.5', '198.51.100.7'])
       expect((await fetch(`${config.origin}/mcp/account`, { method: 'POST', headers: { authorization: 'Bearer nope', 'x-real-ip': ip } })).status).toBe(401);
-    expect(await bucket('mcp-ip:203.0.113.5')).toBe(2);
-    expect(await bucket('mcp-ip:198.51.100.7')).toBe(1);
+    // 'nope' is a legacy-shaped token, which has its own flood key in release 1.
+    expect(await bucket('mcp-ip-legacy:203.0.113.5')).toBe(2);
+    expect(await bucket('mcp-ip-legacy:198.51.100.7')).toBe(1);
+    expect(await bucket('mcp-ip:203.0.113.5')).toBeUndefined();
   });
   const mcpAs = (ip: string, bearer: string) => fetch(`${config.origin}/mcp/account`, { method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'x-real-ip': ip } });
-  it('limits failed token checks per IP before they reach the database', async () => {
+  it('limits failed legacy-shaped token checks per IP before they reach the database', async () => {
     const bucket = async (key: string) => (await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(key)])).rows[0]?.count;
     const context = await service.auth.$context;
     const original = context.adapter.findOne;
@@ -469,28 +476,31 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     context.adapter.findOne = ((...args: Parameters<typeof original>) => { lookups++; return original(...args); }) as typeof original;
     onTestFinished(() => { context.adapter.findOne = original; });
     let accepted = 0;
-    while ((await mcpAs('192.0.2.44', `made-up-${accepted}`)).status === 401 && accepted < 400) accepted++;
-    expect(accepted).toBeGreaterThanOrEqual(100);
-    expect(accepted).toBeLessThan(200);
+    while ((await mcpAs('192.0.2.44', `made-up-${accepted}`)).status === 401 && accepted < 600) accepted++;
+    // The burst is the legacy in-flight cap (256), plus 2 a second while the loop runs.
+    expect(accepted).toBeGreaterThanOrEqual(256);
+    expect(accepted).toBeLessThan(400);
     // Past the limit a made-up token costs no database round trip and no store write.
-    const counted = await bucket('mcp-ip:192.0.2.44'), before = lookups;
+    const counted = await bucket('mcp-ip-legacy:192.0.2.44'), before = lookups;
     for (let i = 0; i < 10; i++) expect((await mcpAs('192.0.2.44', `more-${i}`)).status).toBe(429);
     expect(lookups).toBe(before);
-    expect(await bucket('mcp-ip:192.0.2.44')).toBe(counted);
+    expect(await bucket('mcp-ip-legacy:192.0.2.44')).toBe(counted);
     expect((await mcpAs('192.0.2.45', 'made-up')).status).toBe(401);
   });
-  it('spends the failure budget only on tokens proven invalid: valid tokens, and database errors, cost nothing', async () => {
-    const valid = (await freshAccount('budget')).access_token;
-    // Valid tokens from one shared IP are never throttled by the failure budget, even all at once.
+  it('spends the legacy failure budget only on tokens proven invalid: valid tokens, and database errors, cost nothing', async () => {
+    const seed = (await freshAccount('budget')).access_token;
+    const valid = randomToken().replace(/\./g, 'x');
+    await pool.query('UPDATE "oauthAccessToken" SET token=$2 WHERE token=$1', [digest(seed), digest(valid)]);
+    // Valid legacy tokens from one shared IP are never throttled by the failure budget, even all at once.
     const statuses = await Promise.all(Array.from({ length: 45 }, () => mcpAs('192.0.2.120', valid).then(r => r.status)));
     expect(statuses).not.toContain(401);
     expect((await mcpAs('192.0.2.120', 'made-up')).status).toBe(401);
-    // Mixed in with 30 valid requests, 100 forged ones leave about 20 of the 120 failures.
-    for (let i = 0; i < 100; i++) expect((await mcpAs('192.0.2.121', `forged-${i}`)).status).toBe(401);
+    // Mixed in with 30 valid requests, 200 forged ones leave about 56 of the 256 failures.
+    for (let i = 0; i < 200; i++) expect((await mcpAs('192.0.2.121', `forged-${i}`)).status).toBe(401);
     for (let i = 0; i < 30; i++) await mcpAs('192.0.2.121', valid);
     let more = 0;
-    while ((await mcpAs('192.0.2.121', `forged-more-${more}`)).status === 401 && more < 200) more++;
-    expect(more).toBeGreaterThanOrEqual(15); expect(more).toBeLessThan(40);
+    while ((await mcpAs('192.0.2.121', `forged-more-${more}`)).status === 401 && more < 300) more++;
+    expect(more).toBeGreaterThanOrEqual(50); expect(more).toBeLessThan(100);
     // A database error is not a failed token.
     const context = await service.auth.$context;
     const original = context.adapter.findOne;
@@ -499,8 +509,11 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     finally { context.adapter.findOne = original; }
     expect((await mcpAs('192.0.2.122', 'after-errors')).status).toBe(401);
   });
-  it('bounds token checks in flight per address, so concurrency cannot dodge the failure budget', async () => {
-    const replica = await createAccountApp(config, store, accountDependencies(supervisorDeps, store, HOURLY), publicDependencies(supervisorDeps), { maxTokenChecksInFlight: 8 });
+  it.each([
+    ['at1', { maxTokenChecksInFlight: 8 }, () => accessTokens.generate()],
+    ['legacy', { maxLegacyChecksInFlight: 8 }, () => randomToken().replace(/\./g, 'x')],
+  ] as const)('bounds %s token checks in flight per address, so concurrency cannot dodge the admission checks', async (shape, limits, make) => {
+    const replica = await createAccountApp(config, store, accountDependencies(supervisorDeps, store, HOURLY), publicDependencies(supervisorDeps), limits);
     server.removeListener('request', service.app); server.on('request', replica.app);
     onTestFinished(async () => { server.removeListener('request', replica.app); server.on('request', service.app); await replica.close(); });
     const context = await replica.auth.$context;
@@ -509,31 +522,37 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     const gate = new Promise<void>(resolve => (release = resolve));
     let lookups = 0;
     context.adapter.findOne = (async (...args: Parameters<typeof original>) => { lookups++; await gate; return original(...args); }) as typeof original;
+    // Held lookups are released before the replica is torn down (registered after, so it runs first).
     onTestFinished(() => { release(); context.adapter.findOne = original; });
-    const held = Array.from({ length: 8 }, (_, i) => mcpAs('192.0.2.150', `held-${i}`).then(r => r.status));
+    const held = Array.from({ length: 8 }, () => mcpAs('192.0.2.150', make()).then(r => r.status));
     await vi.waitFor(() => expect(lookups).toBe(8), { timeout: 15_000, interval: 25 });
-    expect((await mcpAs('192.0.2.150', 'extra')).status, 'the ninth check is refused at once').toBe(429);
+    expect((await mcpAs('192.0.2.150', make())).status, 'the ninth check is refused at once').toBe(429);
     expect(lookups).toBe(8);
     // Another address is not affected by this one's backlog.
-    const other = mcpAs('192.0.2.151', 'other').then(r => r.status);
+    const other = mcpAs('192.0.2.151', make()).then(r => r.status);
     await vi.waitFor(() => expect(lookups).toBe(9), { timeout: 15_000, interval: 25 });
     release();
     expect(await Promise.all(held)).toEqual(Array(8).fill(401));
     expect(await other).toBe(401);
-    // The slots come back once the checks finish.
-    expect((await mcpAs('192.0.2.150', 'after')).status).toBe(401);
+    // The slots come back once the checks finish (a legacy address has also spent its small failure budget).
+    if (shape === 'at1') expect((await mcpAs('192.0.2.150', make())).status).toBe(401);
   });
   it('counts one IPv6 /64 as one client in every limiter, and an IPv4-mapped address as its IPv4 client', async () => {
     let limited = false;
-    for (let i = 0; i < 300 && !limited; i++) limited = (await mcpAs(`2001:db8:9:9::${i + 1}`, `forged-${i}`)).status === 429;
-    expect(limited, 'the /64 shares one failure budget').toBe(true);
+    for (let i = 0; i < 400 && !limited; i++) limited = (await mcpAs(`2001:db8:9:9::${i + 1}`, `forged-${i}`)).status === 429;
+    expect(limited, 'the /64 shares one legacy failure budget').toBe(true);
     expect((await mcpAs('2001:db8:9:9:aaaa::1', 'again')).status).toBe(429);
     expect((await mcpAs('2001:db8:9:a::1', 'again')).status).toBe(401);
     const bucket = async (key: string) => (await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(key)])).rows[0]?.count;
-    expect(await bucket('mcp-ip:2001:db8:9:9::/64')).toBeGreaterThan(0);
-    expect(await bucket('mcp-ip:2001:db8:9:9::1')).toBeUndefined();
+    expect(await bucket('mcp-ip-legacy:2001:db8:9:9::/64')).toBeGreaterThan(0);
+    expect(await bucket('mcp-ip-legacy:2001:db8:9:9::1')).toBeUndefined();
     expect((await mcpAs('::ffff:192.0.2.160', 'x')).status).toBe(401);
-    expect(await bucket('mcp-ip:192.0.2.160')).toBe(1);
+    expect(await bucket('mcp-ip-legacy:192.0.2.160')).toBe(1);
+    // The at1 path counts the same way: a /64 as one client, a mapped address as its IPv4 client.
+    expect((await mcpAs('::ffff:192.0.2.161', accessTokens.generate())).status).toBe(401);
+    expect(await bucket('mcp-ip:192.0.2.161')).toBe(1);
+    expect((await mcpAs('2001:db8:9:b:1::1', accessTokens.generate())).status).toBe(401);
+    expect(await bucket('mcp-ip:2001:db8:9:b::/64')).toBe(1);
   });
   /** Wraps the Better Auth handler for the rest of the test, counting token and revoke requests it runs. */
   function watchHandler(wrap?: (original: typeof service.auth.handler) => typeof service.auth.handler) {
@@ -558,14 +577,18 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     return done;
   }
   it('padded grants and scheme-prefixed revoke tokens wait on the same lock as the plain forms, and only that lock', async () => {
-    const refreshAccount = await freshAccount('lock-padded'), revokeAccount = await freshAccount('lock-bearer');
+    const refreshAccount = await freshAccount('lock-padded'), revokeAccount = await freshAccount('lock-bearer'), accessAccount = await freshAccount('lock-bearer-at1');
     const flow = await authorize();
     const padded = new URLSearchParams({ client_id: refreshAccount.clientId, grant_type: ' refresh_token ', refresh_token: refreshAccount.refresh_token }).toString();
     const bearer = new URLSearchParams({ client_id: revokeAccount.clientId, token: `Bearer ${revokeAccount.refresh_token}`, refresh_token: 'made-up' }).toString();
+    // An at1 access token takes the same lock as any other token of its owner.
+    expect(accessTokens.parse(accessAccount.access_token)).toBeTruthy();
+    const bearerAccess = new URLSearchParams({ client_id: accessAccount.clientId, token: `Bearer ${accessAccount.access_token}`, token_type_hint: 'access_token' }).toString();
     const code = new URLSearchParams({ client_id: flow.client.client_id, grant_type: '\tauthorization_code ', code: flow.code!, code_verifier: flow.verifier, redirect_uri: flow.client.redirect_uris[0], refresh_token: 'made-up', token: 'other' }).toString();
     const variants = [
       ['padded', 'token', padded, `user:${refreshAccount.userId}`],
       ['bearer', 'revoke', bearer, `user:${revokeAccount.userId}`],
+      ['bearer at1 access token', 'revoke', bearerAccess, `user:${accessAccount.userId}`],
       ['code', 'token', code, `code:${flow.code}`],
     ] as const;
     for (const [name, path, body, key] of variants) {
@@ -582,6 +605,8 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     // With nothing held they run (the lock was released and the connection came back).
     expect((await rawPost('token', padded)).status).toBe(200);
     expect((await rawPost('revoke', bearer)).status).toBe(200);
+    expect((await rawPost('revoke', bearerAccess)).status).toBe(200);
+    expect((await mcp(accessAccount.access_token)).status, 'the revoked at1 token is refused').toBe(401);
     expect((await rawPost('token', code)).status, 'the code works once').toBe(200);
     // Stray fields never choose the lock: a lock on another user's token does not block this revoke.
     const mine = await freshAccount('lock-mine'), theirs = await freshAccount('lock-theirs');
@@ -774,6 +799,59 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     const user = await helper.saveUser(helper.createUser({ email: `${name}-${randomBytes(4).toString('hex')}@example.test`, emailVerified: true }));
     return { ...await token(await login(user.id)), userId: user.id as string };
   };
+  const bucketCount = async (key: string) => (await pool.query('SELECT count FROM request_limits WHERE bucket=$1', [digest(key)])).rows[0]?.count as number | undefined;
+  /** `count` further valid tokens for the same grant: each a distinct, MAC-valid value with its own database row. */
+  async function validTokens(token: string, count: number) {
+    const { adapter } = await service.auth.$context;
+    const row = await adapter.findOne<Record<string, unknown>>({ model: 'oauthAccessToken', where: [{ field: 'token', value: digest(token) }] });
+    expect(row).toBeTruthy();
+    const { id: _id, ...data } = row!;
+    const created = Array.from({ length: count }, () => accessTokens.generate());
+    for (const value of created) await adapter.create({ model: 'oauthAccessToken', data: { ...data, token: digest(value) } });
+    return created;
+  }
+  /** A fresh account's grant and `count` valid at1 tokens for it (a new account keeps the per-user limits out of the way). */
+  const freshTokens = async (name: string, count: number) => validTokens((await freshAccount(name)).access_token, count);
+  /**
+   * A replica (cold admission cache) answering /mcp/account, whose real `oauthAccessToken` lookups are counted. `gate`
+   * may hold a lookup until the test releases it. Everything else is the real handler and the real database.
+   */
+  async function withReplica<T>(
+    options: Parameters<typeof createAccountApp>[4],
+    run: (replica: Awaited<ReturnType<typeof createAccountApp>>, lookups: { count: number; of: string[] }) => Promise<T>,
+    gate?: (digestOfToken: string) => Promise<void> | undefined,
+  ) {
+    const replica = await createAccountApp(config, store, accountDependencies(supervisorDeps, store, HOURLY), publicDependencies(supervisorDeps), options);
+    const lookups = { count: 0, of: [] as string[] };
+    const { adapter } = await replica.auth.$context;
+    const findOne = adapter.findOne.bind(adapter) as typeof adapter.findOne;
+    adapter.findOne = (async (query: Parameters<typeof adapter.findOne>[0]) => {
+      if (query.model === 'oauthAccessToken') {
+        const value = String(query.where?.find(w => w.field === 'token')?.value);
+        lookups.count++; lookups.of.push(value);
+        // The result is read first and held afterwards, so a held check carries the state it saw.
+        const result = await findOne(query);
+        await gate?.(value);
+        return result;
+      }
+      return findOne(query);
+    }) as typeof adapter.findOne;
+    server.removeListener('request', service.app); server.on('request', replica.app);
+    try { return await run(replica, lookups); }
+    finally { server.removeListener('request', replica.app); server.on('request', service.app); await replica.close(); }
+  }
+  /** What an empty POST gets once the token is admitted: the MCP transport refuses the missing content type. */
+  const ADMITTED = 415;
+  /** At most 32 sockets at once: hundreds of simultaneous connects overflow the listen backlog on some systems. */
+  const agent = new Agent({ keepAlive: true, maxSockets: 32 });
+  afterAll(() => agent.destroy());
+  const post = (token: string, ip: string) => new Promise<number>((resolve, reject) => {
+    const request = httpRequest(`${config.origin}/mcp/account`, { method: 'POST', agent, headers: { Authorization: `Bearer ${token}`, 'x-real-ip': ip } },
+      response => { response.resume(); response.on('end', () => resolve(response.statusCode!)); });
+    request.on('error', reject); request.end();
+  });
+  const revoke = (token: string, revoked: Date | null = new Date()) => pool.query('UPDATE "oauthAccessToken" SET revoked=$2 WHERE token=$1', [digest(token), revoked]);
+  const statusCounts = (statuses: number[]) => Object.fromEntries([...new Set(statuses)].sort().map(s => [s, statuses.filter(x => x === s).length]));
   const studyReply = { statusCode: 200, data: { protocolSection: { identificationModule: { nctId: 'NCT00000001' } } }, responseOptions: { headers: { 'content-type': 'application/json' } } };
   it('applies hourly per-account limits in PostgreSQL, separately per account', async () => {
     const first = await freshAccount('quota-a'), second = await freshAccount('quota-b');
@@ -838,15 +916,17 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     const adapter = (await service.auth.$context).adapter;
     const where = [{ field: 'token', value: digest(a.access_token) }];
     const row = await adapter.findOne<any>({ model: 'oauthAccessToken', where });
+    // A rejected token is remembered for 60 s, so each case runs on its own copy of the row.
     for (const [update, status] of [
       [{ expiresAt: new Date(0) }, 401],
       [{ resources: ['https://other.example/mcp'] }, 401],
       [{ scopes: ['offline_access'] }, 403],
     ] as const) {
-      await adapter.update({ model: 'oauthAccessToken', where, update });
-      expect((await mcp(a.access_token)).status).toBe(status);
-      await adapter.update({ model: 'oauthAccessToken', where, update: { expiresAt: row.expiresAt, resources: row.resources, scopes: row.scopes } });
+      const [copy] = await validTokens(a.access_token, 1);
+      await adapter.update({ model: 'oauthAccessToken', where: [{ field: 'token', value: digest(copy!) }], update });
+      expect((await mcp(copy!)).status).toBe(status);
     }
+    expect(row).toBeTruthy();
     await adapter.update({ model: 'oauthClient', where: [{ field: 'clientId', value: a.clientId }], update: { disabled: true } });
     expect((await mcp(a.access_token)).status).toBe(401);
     const stored = await pool.query('SELECT token FROM "oauthAccessToken"');
@@ -889,5 +969,323 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     const revoke = await fetch(`${config.origin}/api/auth/oauth2/revoke`, { method: 'POST', body: new URLSearchParams({ client_id: a.clientId, token: refreshed.access_token, token_type_hint: 'access_token' }) });
     expect(revoke.status).toBe(200); expect((await mcp(refreshed.access_token)).status).toBe(401);
     expect((await exchange(a.clientId, { grant_type: 'refresh_token', refresh_token: a.refresh_token })).status).toBe(400);
+  });
+  it('junk in the authenticated format is refused before any database work, then a valid token passes', async () => {
+    const good = accessTokens.generate();
+    const [, , iat, random, mac] = good.split('.') as [string, string, string, string, string];
+    const other = new AccessTokenFormat(randomToken()).generate();
+    const junk = [
+      () => `at1.a.${iat}.${randomToken().slice(0, 32)}.${randomToken().slice(0, 22)}`,
+      () => `at1.a.${iat}.${random}.${randomToken().slice(0, 22)}`,
+      () => `at1.b.${iat}.${random}.${mac}`,
+      () => `at1.a.${iat}.${random}!.${mac}`,
+      () => `at1.a.${iat}.${random}.${mac}.extra`,
+      () => `at1.${'x'.repeat(3000)}`,
+      () => `at1.${'x'.repeat(5000)}`,
+      () => other,
+      () => accessTokens.generate().replace(/.$/, c => (c === 'A' ? 'B' : 'A')),
+    ];
+    await withReplica({}, async (_replica, lookups) => {
+      const valid = (await freshTokens('junk', 1))[0]!;
+      const before = await bucketCount('mcp-ip:192.0.2.170');
+      const statuses: number[] = [];
+      for (let wave = 0; wave < 100; wave++)
+        statuses.push(...await Promise.all(Array.from({ length: 100 }, (_, i) => post(junk[(wave + i) % junk.length]!(), '192.0.2.170'))));
+      expect(statuses.length).toBe(10_000);
+      expect(statusCounts(statuses)).toEqual({ 401: 10_000 });
+      expect(lookups.count, 'junk made no adapter call').toBe(0);
+      expect(await bucketCount('mcp-ip:192.0.2.170'), 'and spent no flood allowance').toBe(before);
+      expect(await bucketCount('mcp-ip-legacy:192.0.2.170')).toBeUndefined();
+      expect(await post(valid, '192.0.2.170')).toBe(ADMITTED);
+      expect(lookups.count).toBe(1);
+    });
+  });
+  it('a revoked real token replayed past the old burst costs one lookup, sequentially and 256-way', async () => {
+    const [sequential, concurrent, stranger] = await freshTokens('replay', 3);
+    await revoke(sequential!); await revoke(concurrent!);
+    await withReplica({}, async (_replica, lookups) => {
+      for (let i = 0; i < 150; i++) expect(await post(sequential!, '192.0.2.151')).toBe(401);
+      expect(lookups.of.filter(d => d === digest(sequential!)).length).toBe(1);
+      expect(await post(stranger!, '192.0.2.151')).toBe(ADMITTED);
+    });
+    // Cold cache, 256 at once. The first lookup is held until the first 32 requests (the agent's socket
+    // limit) have been received.
+    let received = 0;
+    let enough!: () => void;
+    const arrived = new Promise<void>(resolve => (enough = resolve));
+    const count = () => { if (++received === 32) enough(); };
+    server.on('request', count);
+    onTestFinished(() => { server.removeListener('request', count); enough(); });
+    await withReplica({}, async (_replica, lookups) => {
+      const ip = '192.0.2.152';
+      const statuses = await Promise.all(Array.from({ length: 256 }, () => post(concurrent!, ip)));
+      expect(lookups.of.filter(d => d === digest(concurrent!)).length).toBe(1);
+      // The owner and its waiters answer 401; requests that arrive later hit the remembered rejection.
+      expect(statuses.every(s => s === 401 || s === 429), JSON.stringify(statusCounts(statuses))).toBe(true);
+      expect(statuses.filter(s => s === 401).length).toBeGreaterThanOrEqual(9);
+      // The shared address is not locked out: a different valid token is served, and the replay stays free.
+      expect(await post(stranger!, ip)).toBe(ADMITTED);
+      expect(await post(concurrent!, ip)).toBe(401);
+      expect(lookups.of.filter(d => d === digest(concurrent!)).length).toBe(1);
+    }, () => arrived.then(() => new Promise<void>(resolve => setImmediate(resolve))));
+  });
+  it('the maximum-age bound, fixed negative TTL and the skew window follow the admission deadline', async () => {
+    // Issuance and admission share the injected clock, three hours ahead of the real one.
+    const base = 3 * 3600_000;
+    let offset = base;
+    const ip = { 'x-real-ip': '192.0.2.153' };
+    await withReplica({ now: () => Date.now() + offset }, async (_replica, lookups) => {
+      const token = (await freshAccount('age')).access_token;
+      expect(Math.abs(accessTokens.parse(token)!.iat - (Date.now() + base) / 1000), 'the issue time comes from the injected clock').toBeLessThan(60);
+      const count = () => lookups.of.filter(d => d === digest(token)).length;
+      const call = () => fetch(`${config.origin}/mcp/account`, { method: 'POST', headers: { authorization: `Bearer ${token}`, ...ip } }).then(r => r.status);
+      // The database says expired, but the token is still inside the 60 s skew window: one lookup, remembered.
+      await pool.query('UPDATE "oauthAccessToken" SET "expiresAt"=$2 WHERE token=$1', [digest(token), new Date(0)]);
+      offset = base + (900 + 30) * 1000;
+      expect(await call()).toBe(401);
+      expect(await call()).toBe(401);
+      expect(count()).toBe(1);
+      // Past iat + lifetime + skew nothing reaches the database, cached or not.
+      offset = base + (900 + 61) * 1000;
+      expect(await call()).toBe(401);
+      expect(count()).toBe(1);
+    });
+    // An expired real token on a cold cache: no adapter call at all.
+    const expired = (await freshAccount('expired')).access_token;
+    await withReplica({ now: () => Date.now() + 2 * 3600_000 }, async (_replica, lookups) => {
+      expect(await post(expired, '192.0.2.153')).toBe(401);
+      expect(lookups.count).toBe(0);
+    });
+  });
+  it('revocation applies on the very next request; a re-enabled client is accepted within 60 s', async () => {
+    let offset = 0;
+    const [revoked, member] = await freshTokens('revocation', 2);
+    const clientId = (await (await service.auth.$context).adapter.findOne<{ clientId: string }>({ model: 'oauthAccessToken', where: [{ field: 'token', value: digest(member!) }] }))!.clientId;
+    const setDisabled = async (disabled: boolean) => (await service.auth.$context).adapter.update({ model: 'oauthClient', where: [{ field: 'clientId', value: clientId }], update: { disabled } });
+    onTestFinished(async () => { await setDisabled(false); });
+    await withReplica({ now: () => Date.now() + offset }, async (_replica, lookups) => {
+      expect(await post(revoked!, '192.0.2.154')).toBe(ADMITTED);
+      await revoke(revoked!);
+      expect(await post(revoked!, '192.0.2.154'), 'revocation is not delayed').toBe(401);
+      expect(await post(member!, '192.0.2.154')).toBe(ADMITTED);
+      await setDisabled(true);
+      expect(await post(member!, '192.0.2.154')).toBe(401);
+      await setDisabled(false);
+      const seen = lookups.count;
+      // Restored, but the rejection is remembered for its fixed 60 s: no lookup, still refused...
+      expect(await post(member!, '192.0.2.154')).toBe(401);
+      expect(lookups.count).toBe(seen);
+      offset = 59_000;
+      expect(await post(member!, '192.0.2.154')).toBe(401);
+      // ...and accepted once it has expired, however often it was hit meanwhile.
+      offset = 61_000;
+      expect(await post(member!, '192.0.2.154')).toBe(ADMITTED);
+    });
+  });
+  it('a first-use burst of 64 with a brand-new valid token is fully served, each with its own check', async () => {
+    const token = (await freshTokens('burst', 1))[0]!;
+    await withReplica({}, async (_replica, lookups) => {
+      const statuses = await Promise.all(Array.from({ length: 64 }, () => post(token, '192.0.2.155')));
+      expect(statusCounts(statuses)).toEqual({ [ADMITTED]: 64 });
+      expect(lookups.of.filter(d => d === digest(token)).length).toBe(64);
+    });
+  });
+  it('a warmed, then revoked token cannot take the shared slots: 16 checks at most, others queue, and other users are served meanwhile', async () => {
+    const [token, stranger] = await freshTokens('warmed', 2);
+    const ip = '192.0.2.156';
+    let holding = false;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => (release = resolve));
+    await withReplica({ maxTokenChecksInFlight: 20 }, async (_replica, lookups) => {
+      const mine = () => lookups.of.filter(d => d === digest(token!)).length;
+      expect(await post(token!, ip)).toBe(ADMITTED);
+      expect(mine()).toBe(1);
+      await revoke(token!);
+      holding = true;
+      const burst = Array.from({ length: 256 }, () => post(token!, ip));
+      try {
+        await vi.waitFor(() => expect(mine()).toBe(1 + 16), { timeout: 15_000, interval: 10 });
+        // Sixteen checks are pending and hold slots; the other requests queue without holding any. A different
+        // valid token on the same address is served while they are still pending (a separate connection pool:
+        // the burst's agent has all of its sockets busy).
+        expect((await mcpAs(ip, stranger!)).status).toBe(ADMITTED);
+        expect(mine()).toBe(1 + 16);
+      } finally {
+        // Release before the replica is torn down: a held lookup must not outlive the test body.
+        holding = false;
+        release();
+      }
+      const statuses = await Promise.all(burst);
+      expect(statuses.every(s => s === 401 || s === 429), JSON.stringify(statusCounts(statuses))).toBe(true);
+      // The first rejection answers the queued requests; the replay stays free afterwards.
+      expect(mine()).toBe(1 + 16);
+      for (let i = 0; i < 20; i++) expect(await post(token!, ip)).toBe(401);
+      expect(mine()).toBe(1 + 16);
+      expect(await post(stranger!, ip)).toBe(ADMITTED);
+    }, value => (holding && value === digest(token!) ? held : undefined));
+  });
+  it('a stale overlapping rejection does not renew the negative entry: restored access is admitted 61 s after the first rejection', async () => {
+    let offset = 0;
+    const token = (await freshTokens('stale', 1))[0]!;
+    const ip = '192.0.2.157';
+    const holds: Array<() => void> = [];
+    let holding = false;
+    await withReplica({ now: () => Date.now() + offset }, async (_replica, lookups) => {
+      const mine = () => lookups.of.filter(d => d === digest(token)).length;
+      expect(await post(token, ip)).toBe(ADMITTED);
+      await revoke(token);
+      try {
+        // Two checks overlap; both read the revoked row (held after the read).
+        holding = true;
+        const first = post(token, ip), second = post(token, ip);
+        await vi.waitFor(() => expect(holds.length).toBe(2), { timeout: 15_000, interval: 10 });
+        holding = false;
+        // Either request may reach the database first, so release whichever is held first and wait for
+        // whichever finishes first (a rejection), never for a particular one.
+        holds[0]!();
+        const [firstStatus, firstDone] = await Promise.race([first.then(status => [status, 'first'] as const), second.then(status => [status, 'second'] as const)]);
+        expect(firstStatus).toBe(401);
+        await revoke(token, null);
+        offset = 30_000;
+        holds[1]!();
+        expect(await (firstDone === 'first' ? second : first)).toBe(401);
+      } finally {
+        // Release before the replica is torn down: a held lookup must not outlive the test body.
+        holding = false;
+        for (const hold of holds) hold();
+      }
+      const seen = mine();
+      offset = 61_000;
+      expect(await post(token, ip), 'admitted again 61 s after the first rejection').toBe(ADMITTED);
+      expect(mine()).toBe(seen + 1);
+    }, value => (holding && value === digest(token) ? new Promise<void>(resolve => holds.push(resolve)) : undefined));
+  });
+  /** Turns a grant's token into a legacy-shaped (no `at1.` prefix) one, as an older release issued it. */
+  async function legacyToken(grant: string) {
+    const [seed] = await validTokens(grant, 1);
+    const legacy = randomToken().replace(/\./g, 'x');
+    await pool.query('UPDATE "oauthAccessToken" SET token=$2 WHERE token=$1', [digest(seed!), digest(legacy)]);
+    return legacy;
+  }
+  it('legacy-token users keep their concurrency: 200 simultaneous valid requests from one IP are all served', async () => {
+    const legacy = await legacyToken((await freshAccount('legacy-200')).access_token);
+    // One token is the harder case (no per-token dedup on the legacy path).
+    const statuses = await Promise.all(Array.from({ length: 200 }, () => post(legacy, '192.0.2.162')));
+    expect(statusCounts(statuses)).toEqual({ [ADMITTED]: 200 });
+  });
+  it('release 1: legacy tokens keep working, and a legacy junk flood cannot touch at1 users', async () => {
+    const grant = (await freshAccount('release-1')).access_token;
+    const legacy = await legacyToken(grant);
+    const at1 = await validTokens(grant, 260);
+    const ip = '192.0.2.160';
+    let legacyJunk = new Set<string>();
+    let release!: () => void;
+    let held = new Promise<void>(resolve => (release = resolve));
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    onTestFinished(() => { vi.useRealTimers(); });
+    await withReplica({ maxLegacyChecksInFlight: 24 }, async (_replica, lookups) => {
+      try {
+        let nextAt1 = 0;
+        // Mixed issuers: both shapes are accepted from the same address.
+        expect((await mcpAs(ip, legacy)).status).toBe(ADMITTED);
+        expect((await mcpAs(ip, at1[nextAt1++]!)).status).toBe(ADMITTED);
+        const shared = (await bucketCount(`mcp-ip:${ip}`))!;
+        let at1Requests = 1;
+        const startedAt = Date.now();
+        const rounds = 12;
+        for (let round = 0; round < rounds; round++) {
+          legacyJunk = new Set();
+          held = new Promise<void>(resolve => (release = resolve));
+          const junk = Array.from({ length: 200 }, () => randomToken().replace(/\./g, 'x'));
+          for (const value of junk) legacyJunk.add(digest(value));
+          let settled = 0;
+          const burst = junk.map(value => post(value, ip).finally(() => settled++));
+          // Every request either holds a legacy lookup (held by the gate) or has been answered: at that point the
+          // legacy slots are saturated or the failure budget is spent. Then serve at1 users.
+          await vi.waitFor(() => expect(settled + lookups.of.filter(d => legacyJunk.has(d)).length).toBe(junk.length), { timeout: 15_000, interval: 10 });
+          for (let i = 0; i < 20; i++) { at1Requests++; expect((await mcpAs(ip, at1[nextAt1++]!)).status).toBe(ADMITTED); }
+          release();
+          const statuses = await Promise.all(burst);
+          expect(statuses.every(s => s === 401 || s === 429)).toBe(true);
+          vi.advanceTimersByTime(6_000);
+        }
+        // Legacy lookups are bounded by the failure budget: the burst (the legacy cap, 24 here) + 2/s over the elapsed
+        // time, not by slots.
+        const elapsed = (Date.now() - startedAt) / 1000;
+        expect(elapsed).toBeGreaterThanOrEqual(60);
+        const legacyLookups = lookups.of.length - at1Requests;
+        expect(legacyLookups, `${legacyLookups} legacy lookups in ${elapsed}s`).toBeLessThanOrEqual(24 + 2 * elapsed);
+        // The budget, not the slot cap, was the binding limit.
+        expect(legacyLookups, `${legacyLookups} legacy lookups`).toBeLessThan(rounds * 24);
+        // The shared flood counter saw only the at1 requests; legacy traffic has its own key.
+        expect((await bucketCount(`mcp-ip:${ip}`))! - shared).toBe(at1Requests - 1);
+        expect((await bucketCount(`mcp-ip-legacy:${ip}`)) ?? 0).toBeGreaterThanOrEqual(legacyLookups);
+      } finally {
+        // Release before the replica is torn down: a held lookup must not outlive the test body.
+        legacyJunk = new Set();
+        release();
+      }
+    }, value => (legacyJunk.has(value) ? held : undefined));
+  });
+  it('other bearer values stay out of the at1 checks: /mcp ignores them, and a JWT sent to /mcp/account is an ordinary legacy-shaped miss', async () => {
+    const context = await service.auth.$context;
+    const original = context.adapter.findOne;
+    let lookups = 0;
+    context.adapter.findOne = ((...args: Parameters<typeof original>) => { lookups++; return original(...args); }) as typeof original;
+    onTestFinished(() => { context.adapter.findOne = original; });
+    const part = () => randomBytes(24).toString('base64url');
+    const jwt = `eyJhbGciOiJFUzI1NiJ9.${part()}.${part()}`;
+    const ip = '192.0.2.171';
+    // The anonymous endpoint reads no token at all, whatever it looks like (the same tools/list as above).
+    for (const value of [jwt, accessTokens.generate(), 'at1.not-a-token']) {
+      const response = await fetch(`${config.origin}/mcp`, {
+        method: 'POST', headers: { Authorization: `Bearer ${value}`, 'x-real-ip': ip, 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { _meta: {
+          'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientInfo': { name: 'ignored-bearer', version: '1' }, 'io.modelcontextprotocol/clientCapabilities': {},
+        } } }),
+      });
+      expect(response.status, value.slice(0, 12)).toBe(200);
+    }
+    expect(lookups).toBe(0);
+    expect(await bucketCount(`mcp-ip:${ip}`)).toBeUndefined();
+    expect(await bucketCount(`mcp-ip-legacy:${ip}`)).toBeUndefined();
+    // The account endpoint accepts only tokens its own provider issued: a JWT is not one, and it takes the legacy
+    // path (database lookup, legacy flood key and failure budget), never the MAC admission.
+    expect((await mcpAs(ip, jwt)).status).toBe(401);
+    expect(lookups).toBe(1);
+    expect(await bucketCount(`mcp-ip-legacy:${ip}`)).toBe(1);
+    expect(await bucketCount(`mcp-ip:${ip}`)).toBeUndefined();
+  });
+  it('the real Better Auth handler issues, refreshes, introspects and revokes at1 tokens, and the Bearer-prefixed revoke takes the owner lock', async () => {
+    const flow = await authorize(browser, true, { token_endpoint_auth_method: 'client_secret_post' });
+    const credentials = { client_id: flow.client.client_id, client_secret: flow.client.client_secret as string };
+    const response = await exchange(credentials.client_id, { ...credentials, grant_type: 'authorization_code', code: flow.code!, code_verifier: flow.verifier, redirect_uri: flow.client.redirect_uris[0] });
+    expect(response.status, await response.clone().text()).toBe(200);
+    const issued = await response.json() as any;
+    expect(issued.access_token).toMatch(/^at1\.a\.[0-9a-z]+\.[\w-]{32}\.[\w-]{22}$/);
+    const row = (await pool.query('SELECT * FROM "oauthAccessToken" WHERE token=$1', [digest(issued.access_token)])).rows[0];
+    expect(row, 'the complete token is stored as its digest').toBeTruthy();
+    // This server binds tokens to the user only (no key owner), so the row carries no referenceId.
+    expect(row.referenceId ?? null).toBeNull();
+    const introspect = async (token: string) => (await fetch(`${config.origin}/api/auth/oauth2/introspect`, {
+      method: 'POST', body: new URLSearchParams({ ...credentials, token, token_type_hint: 'access_token' }),
+    })).json() as Promise<{ active: boolean }>;
+    expect((await introspect(issued.access_token)).active).toBe(true);
+    const refresh = await exchange(credentials.client_id, { ...credentials, grant_type: 'refresh_token', refresh_token: issued.refresh_token });
+    expect(refresh.status, await refresh.clone().text()).toBe(200);
+    const refreshed = await refresh.json() as any;
+    expect(accessTokens.parse(refreshed.access_token)).toBeTruthy();
+    expect((await mcp(refreshed.access_token)).status).toBe(200);
+    const userId = row.userId as string;
+    // A Bearer-prefixed revoke takes the owner's lock chosen from the at1 token, then revokes it.
+    const seen = watchHandler();
+    const done = await holdLock(`user:${userId}`);
+    const body = new URLSearchParams({ ...credentials, token: `Bearer ${refreshed.access_token}`, token_type_hint: 'access_token' }).toString();
+    expect((await rawPost('revoke', body)).status, 'the revoke waits for the held lock').toBe(503);
+    expect(seen.entered).toBe(0);
+    await done();
+    expect((await rawPost('revoke', body)).status).toBe(200);
+    expect((await introspect(refreshed.access_token)).active).toBe(false);
+    expect((await mcp(refreshed.access_token)).status).toBe(401);
   });
 });
