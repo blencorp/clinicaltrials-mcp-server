@@ -5,6 +5,14 @@ from `main` (see CONTRIBUTING.md, "Releasing").
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-26
+
+### Fixed
+- reject bearer tokens that are not in the authenticated format (security)
+
+### Changed
+- say step 1 refuses bearers without the at1 prefix and split the queue paragraph (accounts)
+
 ## [0.2.1] - 2026-11-26
 
 ### Fixed
@@ -86,7 +94,8 @@ First release. Nothing was published before it; the development line was `0.1.0-
 - The embedded authorization server and HTTP sessions are removed; the transport is stateless.
 - Node 24 or 26 is required (was Node 20.10 and later).
 
-[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.0...v0.1.1
