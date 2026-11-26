@@ -14,7 +14,7 @@ import { IpRateLimiter, bucketKey, clientIp } from '../server/ipRateLimiter.js';
 import { stripAccessTokenAuthorizationScheme } from 'better-auth/oauth2';
 import { originAllowed, bearerToken, MAX_REQUEST_BODY_BYTES } from '../server/http.js';
 import { ACCOUNT_MCP_PATH, PUBLIC_MCP_PATH } from './paths.js';
-import { DOCS_PATH, docsRoute } from './docs.js';
+import { DOCS_PATH, PORTAL_CSP, docsRoute } from './docs.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -123,8 +123,6 @@ type AccessTokenRow = {
 const PORTAL_ROUTES = ['/', '/sign-in', '/consent', '/account', '/error'];
 /** Portal routes with their own prerendered page in dist/web (web/vite.config.ts). */
 const PRERENDERED_ROUTES: Record<string, string> = { '/privacy-policy': 'privacy-policy.html', '/terms': 'terms.html' };
-const PORTAL_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 
 /** A top-level page load in a browser (not fetch, not an API client). */
 function isNavigation(req: express.Request): boolean {

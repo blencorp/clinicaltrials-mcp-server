@@ -12,7 +12,8 @@ if (process.env.TEST_DATABASE_URL && !process.env.JOURNEY_STATE) {
 
 // Browser tests of the portal (web/) and the documentation site (site/). `pnpm test:web` builds
 // both, serves dist/web with Vite's preview server (client-side routes fall back to index.html)
-// and site/dist through the server's own /docs handler, and mocks the portal and auth APIs per test
+// and site/dist through the server's own /docs handler, runs the anonymous --public-docs server (docs-only
+// landing page and policies, public-docs.spec.ts), and mocks the portal and auth APIs per test
 // (web/e2e/fixtures.ts), so every page state can be checked without a server.
 export default defineConfig({
   testDir: 'web/e2e',
@@ -38,6 +39,12 @@ export default defineConfig({
       // The built site through the server's real /docs handler (CSP, caching, 404 page).
       command: 'pnpm exec tsx web/e2e/docs-server.ts',
       url: 'http://127.0.0.1:4174/docs/',
+      reuseExistingServer: false,
+    },
+    {
+      // The anonymous --public-docs server (the hosted service's mode): docs-only landing and policies.
+      command: 'pnpm exec tsx web/e2e/public-docs-server.ts',
+      url: 'http://127.0.0.1:4176/health',
       reuseExistingServer: false,
     },
     ...(process.env.TEST_DATABASE_URL

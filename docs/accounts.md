@@ -2,8 +2,11 @@
 
 `CTGOV_AUTH_PROVIDER=accounts` (with `--http`) enables Google sign-in through Better Auth, an OAuth
 authorization server for MCP clients, and a small React portal (`/`, `/sign-in`, `/consent`,
-`/account`, the policy pages). It is the hosted mode: anyone can read the API documentation
-anonymously, and a signed-in person can run `execute` under fair-use limits.
+`/account`, the policy pages). It is an option for a server you host yourself: anyone can read the
+API documentation anonymously, and a signed-in person can run `execute` under fair-use limits.
+**BLEN's hosted service does not use it.** That service runs `--http --public-docs`, which is
+anonymous and docs-only: `/mcp`, a landing page, `/privacy-policy`, `/terms`, `/docs/` and `/health`,
+with no sign-in, no `/account` and no `/mcp/account`.
 
 ClinicalTrials.gov needs no API key, so account mode is **keyless**: there is no credentials
 table, no key step in the connection flow, no encryption keyring and no `ENCRYPTION_*`
@@ -31,7 +34,7 @@ Allow/Cancel).
 
 ## Hosting modes exclude each other
 
-`--public-docs` (anonymous, docs-only, no database) and `--insecure` (local development) cannot
+`--public-docs` (anonymous, docs-only, no database; what BLEN hosts) and `--insecure` (local development) cannot
 be combined with `CTGOV_AUTH_PROVIDER=accounts`: startup fails rather than serving without the
 sign-in the configuration asked for. `accounts` also needs `--http`. The Docker image's default
 command is `--http --public-docs`; run account mode by overriding it:
@@ -46,6 +49,14 @@ When the image carries it (`docs-site/`, built from `site/` by `deploy/Dockerfil
 serves the documentation site at `/docs/`: in account mode and in `--public-docs` mode, behind the
 same Host check, with its own content security policy (inline scripts only by hash), and before the
 per-IP limiter. A local checkout without `cd site && pnpm build` and the image copy has no `/docs`.
+
+## Health check
+
+`GET /health` runs `SELECT 1` against the database: `200 {"status":"ok","protocol":"2026-07-28","sandbox":"deno"}`
+(the sandbox kind, `none` if Deno is missing), or `503 {"status":"unavailable"}` when the database
+does not answer. The base transport's `/health` (`--public-docs`, `--insecure`, OIDC) answers
+`{status, version, protocol}` instead. Account mode ignores `CTGOV_AUTH_SCOPES` (its scope is fixed
+at `ctgov:read`) and `CTGOV_ALLOWED_HOSTS` (it trusts `CTGOV_PUBLIC_ORIGIN` only).
 
 ## Portal API
 
@@ -67,7 +78,7 @@ errors redirect to the portal's `/error` page.
 Use a **dedicated** PostgreSQL database. Set in the deployment secret manager:
 
 - `CTGOV_AUTH_PROVIDER=accounts`
-- `CTGOV_PUBLIC_ORIGIN=https://clinicaltrials.mcp.blencorp.com` (or your own origin)
+- `CTGOV_PUBLIC_ORIGIN=https://your-host.example.com` (the origin clients use)
 - `DATABASE_URL`
 - `BETTER_AUTH_SECRET`: a random secret of at least 32 characters
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`

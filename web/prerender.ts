@@ -20,10 +20,19 @@ const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (c) => `&#${c.charC
  * imported and called. The SSR output goes to a scratch directory beside `outDir` (so Node finds
  * the project's node_modules) and is removed afterwards, so only the HTML files are added.
  *
- * `entry` exports `render(path)`; `routes` maps each output file to the URL path it renders.
- * Nothing is inline: the page CSP stays `script-src 'self'`.
+ * `entry` exports `render(path)`; `routes` maps each output file to the URL path it renders;
+ * `template` is the built HTML file the pages are made from. Nothing is inline: the page CSP
+ * stays `script-src 'self'`.
  */
-export function prerender({ entry, routes }: { entry: string; routes: Record<string, string> }): Plugin {
+export function prerender({
+  entry,
+  routes,
+  template: templateFile = 'index.html',
+}: {
+  entry: string;
+  routes: Record<string, string>;
+  template?: string;
+}): Plugin {
   let config: ResolvedConfig;
   return {
     name: 'prerender',
@@ -38,6 +47,7 @@ export function prerender({ entry, routes }: { entry: string; routes: Record<str
       try {
         await build({
           configFile: config.configFile,
+          mode: config.mode,
           logLevel: 'warn',
           build: {
             ssr: resolve(config.root, entry),
@@ -48,14 +58,14 @@ export function prerender({ entry, routes }: { entry: string; routes: Record<str
           },
         });
         const { render } = (await import(pathToFileURL(join(scratch, 'entry.mjs')).href)) as { render: Render };
-        const template = await readFile(join(outDir, 'index.html'), 'utf8');
+        const template = await readFile(join(outDir, templateFile), 'utf8');
         for (const [file, path] of Object.entries(routes)) {
           const { html, title } = render(path);
           if (!/<h1[\s>]/.test(html) || !html.includes('<main')) throw new Error(`prerender: ${path} rendered no h1 and main`);
           const page = template
             .replace('<div id="root"></div>', () => `<div id="root">${html}</div>`)
             .replace(/<title>[^<]*<\/title>/, () => `<title>${escapeHtml(title)}</title>`);
-          if (page === template) throw new Error(`prerender: index.html has no empty #root for ${path}`);
+          if (page === template) throw new Error(`prerender: ${templateFile} has no empty #root for ${path}`);
           await writeFile(join(outDir, file), page);
         }
       } finally {

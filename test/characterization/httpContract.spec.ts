@@ -1,9 +1,10 @@
 // Characterization: pins the HTTP transport contract (auth challenges, health shape, well-known
 // documents, malformed requests, docs-only refusal) and the startup rules of the three hosting
 // modes (authenticated, --public-docs, --insecure). Pinned on v1 originally; updated for the SDK v2
-// port against the expected-diff list in docs/migration-0.1.md (H* rows). test/http-integration.spec.ts
+// port. test/http-integration.spec.ts
 // covers the new security rules (Host, Origin, 405, body cap, auth negatives) and both protocol eras.
 import { SERVER_VERSION } from "../../src/server/mcpServer.js";
+import { REPOSITORY_URL } from "../../src/project.js";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
@@ -146,8 +147,8 @@ describe("authenticated mode: 401/403 challenges and well-known documents", () =
         authorization_servers: [issuer],
         bearer_methods_supported: ["header"],
         scopes_supported: ["ctgov:read"],
-        resource_documentation: "https://github.com/blencorp/clinicaltrials-mcp-server#readme",
-        resource_policy_uri: "https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/terms.md",
+        resource_documentation: `${REPOSITORY_URL}#readme`,
+        resource_policy_uri: `${REPOSITORY_URL}/blob/main/legal/terms.md`,
         resource_name: "ClinicalTrials.gov MCP",
       });
     }

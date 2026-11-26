@@ -20,7 +20,7 @@ export interface FieldNode {
 export async function getJson<T>(path: string): Promise<T> {
   const res = await request(BASE + path, {
     method: "GET",
-    headers: { accept: "application/json", "user-agent": "clinicaltrial-mcp-server schema-check/0.1" },
+    headers: { accept: "application/json", "user-agent": "clinicaltrials-mcp-server schema-check/0.1" },
   });
   if (res.statusCode >= 400) throw new Error(`GET ${path} -> ${res.statusCode}`);
   return (await res.body.json()) as T;
@@ -36,7 +36,7 @@ export interface LiveSpec {
  * keys and `info.version` matter here, so they are read line by line rather than adding a parser.
  */
 export async function liveSpec(): Promise<LiveSpec> {
-  const res = await request(OAS_URL, { method: "GET", headers: { "user-agent": "clinicaltrial-mcp-server schema-check/0.1" } });
+  const res = await request(OAS_URL, { method: "GET", headers: { "user-agent": "clinicaltrials-mcp-server schema-check/0.1" } });
   if (res.statusCode >= 400) throw new Error(`GET ${OAS_URL} -> ${res.statusCode}`);
   const lines = (await res.body.text()).split("\n");
   const start = lines.findIndex((l) => l.trimEnd() === "paths:");

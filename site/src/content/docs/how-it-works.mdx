@@ -47,8 +47,8 @@ page limit. The program above does this, and so does the
   ClinicalTrials.gov.
 - Each run has a time limit, 15 seconds by default and 60 at most, a memory limit, 64 MB by default
   and 256 at most, and size limits for code, results, and logs.
-- The memory limit is the V8 heap. In the separate Deno process, which the hosted server always
-  uses, the process is also ended when its total memory grows by more than twice the limit plus 96
+- The memory limit is the V8 heap. In the separate Deno process, which a server with sign-in
+  always uses, the process is also ended when its total memory grows by more than twice the limit plus 96
   MiB, 224 MiB at the default. That covers buffers, which the heap limit does not count.
 
 [Security](/security/) has more.
@@ -63,7 +63,7 @@ everyone who uses the server. So the server:
 - Pauses every call when ClinicalTrials.gov answers `429`, for as long as it asks, and retries
   that call once if the pause is 30 seconds or less.
 - Caps the calls in one `execute` run, by default at 100.
-- Caches responses, for 5 minutes by default, so a repeated question does not send a new request.
+- Caches responses for 5 minutes, so a repeated question does not send a new request.
 
 A program can start up to 100 calls at once with `Promise.all`, but they still leave at the rate
-above. The hosted server also limits each account. See [Limits](/keys/#limits).
+above. See [Limits](/keys/#limits) for the rest, and for what the hosted server offers.

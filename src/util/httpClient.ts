@@ -2,6 +2,7 @@ import { request, type Dispatcher } from 'undici';
 import { LRUCache } from 'lru-cache';
 import { gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
+import { USER_AGENT } from '../project.js';
 import { logger } from './logger.js';
 import { abortError, currentSignal, sleep } from './executionContext.js';
 
@@ -74,7 +75,7 @@ export class HttpClient {
 
   constructor(opts: HttpClientOptions = {}) {
     this.baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
-    this.userAgent = opts.userAgent ?? 'clinicaltrial-mcp-server (+https://github.com/blencorp/clinicaltrials-mcp-server)';
+    this.userAgent = opts.userAgent ?? USER_AGENT;
     this.timeoutMs = opts.timeoutMs ?? 20_000;
     this.retries = opts.retries ?? 3;
     this.retry429 = opts.retry429 ?? true;

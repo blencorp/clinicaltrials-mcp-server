@@ -1,5 +1,5 @@
 {
-  "name": "@blen/clinicaltrial-mcp-server",
+  "name": "@blen/clinicaltrials-mcp-server",
   "version": "0.1.1",
   "description": "Code-mode MCP server for the ClinicalTrials.gov API: search_api, describe_schema and a sandboxed execute over the ctgov SDK. Unaffiliated with NIH/NLM.",
   "license": "Apache-2.0",
@@ -38,7 +38,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "clinicaltrial-mcp-server": "dist/bin.js"
+    "clinicaltrials-mcp-server": "dist/bin.js"
   },
   "files": [
     "dist",
@@ -65,7 +65,7 @@
     "regen:sdk": "tsx scripts/regenerate-sdk.ts",
     "verify:schema": "tsx scripts/verify-pinned-schema.ts",
     "check:directory": "tsx scripts/check-directory-compliance.ts",
-    "build:web": "vite build --config web/vite.config.ts",
+    "build:web": "vite build --config web/vite.config.ts && vite build --config web/vite.config.ts --mode docs-only",
     "dev:web": "vite build --watch --config web/vite.config.ts",
     "test:web": "pnpm build:web && pnpm --dir site build && playwright test",
     "kit:check": "node scripts/portal-kit.mjs",

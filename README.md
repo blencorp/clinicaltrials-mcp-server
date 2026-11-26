@@ -1,7 +1,7 @@
 # ClinicalTrials.gov MCP
 
 [![CI](https://github.com/blencorp/clinicaltrials-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/blencorp/clinicaltrials-mcp-server/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@blen/clinicaltrial-mcp-server.svg)](https://www.npmjs.com/package/@blen/clinicaltrial-mcp-server)
+[![npm](https://img.shields.io/npm/v/@blen/clinicaltrials-mcp-server.svg)](https://www.npmjs.com/package/@blen/clinicaltrials-mcp-server)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-24%20%7C%2026-339933.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-7c3aed.svg)](https://modelcontextprotocol.io/specification/2026-07-28)
@@ -10,7 +10,11 @@
 
 **Documentation:** [clinicaltrials.mcp.blencorp.com/docs](https://clinicaltrials.mcp.blencorp.com/docs/) has connect buttons for Claude Desktop, Cursor and VS Code, recipes, and the SDK reference.
 
-<video src="assets/launch.mp4" controls width="600"></video>
+<video src="assets/launch.mp4" controls width="600" aria-label="Silent 30-second introduction to ClinicalTrials.gov MCP, built by BLEN">
+  <a href="assets/launch.mp4">Watch the 30-second introduction (MP4, no audio)</a>
+</video>
+
+The video has no sound. It introduces ClinicalTrials.gov MCP and ends with the disclaimer below.
 
 This is a [Model Context Protocol](https://modelcontextprotocol.io) server that connects any MCP client (Claude Desktop and others) to the [ClinicalTrials.gov API v2](https://clinicaltrials.gov/data-api/api), the U.S. National Library of Medicine's registry of clinical studies: conditions, interventions, sponsors, phases, status, eligibility criteria, locations and contacts, outcomes and posted results.
 
@@ -20,11 +24,13 @@ Instead of bolting on dozens of rigid, narrow tools, it hands the model a small,
 
 ## API keys
 
-**No key needed.** ClinicalTrials.gov's API is public: the server sends none, stores none, and asks for none, on your computer or on the hosted service. The only thing that needs an account is the BLEN-hosted `execute` tool, which asks you to sign in with Google (see [Personal accounts](#personal-accounts-hosted-mode)); running the server yourself needs nothing.
+**No key needed.** ClinicalTrials.gov's API is public: the server sends none, stores none, and asks for none, on your computer or on the hosted service. Nothing needs an account either. The BLEN-hosted service is anonymous and offers the documentation tools only (see [Hosted service](#hosted-service)); to run queries with `execute`, run the server yourself (below), where it needs nothing.
 
 ## Quickstart (Claude Desktop)
 
 **Claude Desktop extension.** Download `clinicaltrials-mcp-server.mcpb` from the [latest release](https://github.com/blencorp/clinicaltrials-mcp-server/releases/latest) and open it. There is nothing to fill in.
+
+> **Not yet published to npm.** `@blen/clinicaltrials-mcp-server` is not on npm yet, so the `npx` commands in this README fail until the first release is published. Until then use the extension above, or build from source (`pnpm install && pnpm build`) and run `node dist/bin.js` with the same options (in an MCP client config, `"command": "node", "args": ["/path/to/dist/bin.js"]`).
 
 **Or with `npx`.** Add the server to your Claude Desktop config (**Settings → Developer → Edit Config**):
 
@@ -33,7 +39,7 @@ Instead of bolting on dozens of rigid, narrow tools, it hands the model a small,
   "mcpServers": {
     "clinicaltrials": {
       "command": "npx",
-      "args": ["-y", "@blen/clinicaltrial-mcp-server"]
+      "args": ["-y", "@blen/clinicaltrials-mcp-server"]
     }
   }
 }
@@ -47,7 +53,7 @@ Restart Claude Desktop, then ask in plain language:
 
 Requires **Node.js 24 or 26** (LTS). `npx` downloads and runs the server on demand. If `execute` reports `SandboxUnavailable`, see [Sandbox runtimes](#sandbox-runtimes). To build the extension yourself: `pnpm build && pnpm mcpb:prepare && pnpm mcpb:pack`.
 
-You can also connect to the hosted server, `https://clinicaltrials.mcp.blencorp.com/mcp`, which offers the documentation tools anonymously (see [Personal accounts](#personal-accounts-hosted-mode)).
+You can also add the hosted server, `https://clinicaltrials.mcp.blencorp.com/mcp`, as a custom connector. It offers only the documentation tools, with no sign-in (see [Hosted service](#hosted-service)).
 
 ## See it in action
 
@@ -110,7 +116,7 @@ All three are annotated read-only and non-destructive (`execute` is also `openWo
 MCP client → execute(code) → sandbox → ctgov.* RPC bridge → host HttpClient (gate, cache, retry) → clinicaltrials.gov/api/v2
 ```
 
-Architecture: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Paste-ready examples: [`examples/`](./examples/).
+Architecture: [`docs/architecture.md`](./docs/architecture.md) · Paste-ready examples: [`examples/`](./examples/).
 
 ### ClinicalTrials.gov limits, and how the server respects them
 
@@ -122,9 +128,17 @@ ClinicalTrials.gov publishes no rate limit, so the server keeps its own conserva
 - responses are cached for 5 minutes in memory, so repeated questions do not reach ClinicalTrials.gov again (they still count toward the two budgets above);
 - upstream bodies over 8 MiB fail with `ResponseTooLarge`, and a result over 256 KiB returned from `execute` with `ResultTooLarge`. **Always pass `fields`**: a full study record can be hundreds of KiB.
 
-## Personal accounts (hosted mode)
+## Hosted service
 
-`CTGOV_AUTH_PROVIDER=accounts` adds Google sign-in, an `/account` page, and OAuth/PKCE connections at `/mcp/account`. It is **keyless**: there is no key to save, so signing in is only how the server tells callers apart for fair-use limits (per-account hourly and daily quotas, and simultaneous executions). The anonymous `/mcp` endpoint offers only the documentation tools (`search_api`, `describe_schema`) and never calls ClinicalTrials.gov; `execute` requires signing in and runs only in the Deno sandbox. Account mode needs PostgreSQL and must be started with `--http` (the Docker image's default command is `--http --public-docs`, so override it); it cannot be combined with `--public-docs` or `--insecure`. See [docs/accounts.md](docs/accounts.md).
+BLEN hosts the server at `https://clinicaltrials.mcp.blencorp.com`, started with `--http --public-docs`: anonymous, docs-only and with no sign-in.
+
+- `/mcp` offers `search_api` and `describe_schema` to anyone. It never runs code and never calls ClinicalTrials.gov, so one caller cannot spend the shared upstream budget; `execute` is not registered, and a call to it is answered as an unknown tool.
+- `/` is a landing page, with `/privacy-policy` and `/terms`; `/docs/` is the documentation site and `/health` the health check. There is no account, sign-in or `/mcp/account` there.
+- To run queries, run the server on your computer (`.mcpb` or `npx`, no key, no sign-in) or host it yourself, as below.
+
+### Account mode (self-hosting)
+
+`CTGOV_AUTH_PROVIDER=accounts` is an option for **your own** deployment, not something BLEN's hosted service runs. It adds Google sign-in, an `/account` page, and OAuth/PKCE connections at `/mcp/account`. It is **keyless**: there is no key to save, so signing in is only how the server tells callers apart for fair-use limits (per-account hourly and daily quotas, and simultaneous executions). Its anonymous `/mcp` endpoint offers only the documentation tools and never calls ClinicalTrials.gov; `execute` requires signing in and runs only in the Deno sandbox. Account mode needs PostgreSQL and must be started with `--http` (the Docker image's default command is `--http --public-docs`, so override it); it cannot be combined with `--public-docs` or `--insecure`. See [docs/accounts.md](docs/accounts.md).
 
 ## Sandbox runtimes
 
@@ -139,23 +153,28 @@ Every execution is bounded: code 256 KiB, returned value 256 KiB (`ResultTooLarg
 
 ## Self-hosting (remote HTTP)
 
-```bash
-# Local, single user, no auth (binds 127.0.0.1 unless HOST/--host says otherwise):
-npx @blen/clinicaltrial-mcp-server --http --insecure --port 8080
+The `npx` commands below wait for the first npm release (see the note under [Quickstart](#quickstart-claude-desktop)); until then run `node dist/bin.js` from a source build.
 
-# Anonymous, docs-only (search_api + describe_schema, no execute, no sandbox, no database):
-CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
-  npx @blen/clinicaltrial-mcp-server --http --public-docs
+```bash
+# Local, single user, no auth (binds 127.0.0.1 unless --host says otherwise):
+npx @blen/clinicaltrials-mcp-server --http --insecure --port 8080
+
+# Anonymous, docs-only, as BLEN hosts it (search_api + describe_schema, no execute, no sandbox,
+# no database; serves a landing page and the policies, and /docs where the docs site is present):
+CTGOV_PUBLIC_ORIGIN='https://your-host.example.com' \
+  npx @blen/clinicaltrials-mcp-server --http --public-docs
 
 # Your own server, authenticated via an OIDC issuer.
 # Issuer, audience and an https JWKS URL are all required; Deno must be installed.
 CTGOV_AUTH_PROVIDER=clerk \
-CTGOV_AUTH_ISSUER=https://<tenant>.clerk.accounts.dev \
-CTGOV_AUTH_AUDIENCE=https://your-host.example.com/mcp \
-CTGOV_AUTH_JWKS_URL=https://<tenant>.clerk.accounts.dev/.well-known/jwks.json \
-CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
-  npx @blen/clinicaltrial-mcp-server --http
+CTGOV_AUTH_ISSUER='https://your-tenant.clerk.accounts.dev' \
+CTGOV_AUTH_AUDIENCE='https://your-host.example.com/mcp' \
+CTGOV_AUTH_JWKS_URL='https://your-tenant.clerk.accounts.dev/.well-known/jwks.json' \
+CTGOV_PUBLIC_ORIGIN='https://your-host.example.com' \
+  npx @blen/clinicaltrials-mcp-server --http
 ```
+
+Replace `your-tenant.clerk.accounts.dev` with your identity provider's issuer host and `your-host.example.com` with the address clients use for your server. The Docker image carries the documentation site and serves it at `/docs`; the npm package does not, so there the landing page links to the hosted copy.
 
 Then point any MCP client at it:
 
@@ -170,7 +189,7 @@ The HTTP transport implements the stateless MCP `2026-07-28` Streamable HTTP pro
 - Listening on anything but loopback requires `CTGOV_PUBLIC_ORIGIN` or `CTGOV_ALLOWED_HOSTS` (with authentication, `CTGOV_PUBLIC_ORIGIN` specifically, because OAuth metadata must name the URL clients connect to; `GET /health` is exempt from the Host check): every request's `Host` must match the configured names (DNS-rebinding protection); the trusted origin is never taken from the request. On the anonymous endpoint, browser `Origin`s other than the server's own, loopback, or `CTGOV_ALLOWED_ORIGINS` get `403`; bearer-authenticated endpoints accept any Origin.
 - Request bodies are capped at 1 MiB, and tool arguments at a fixed number of elements.
 
-It also serves OAuth 2.0 Protected Resource Metadata (RFC 9728) and per-IP rate limiting. `GET /health` answers `{status, version, protocol}`; point platform health checks there.
+It also serves OAuth 2.0 Protected Resource Metadata (RFC 9728) and per-IP rate limiting. `GET /health` answers `{status, version, protocol}` (in account mode `{status, protocol, sandbox}`, or `503 {status: "unavailable"}` when the database does not answer); point platform health checks there.
 
 **Docker and Railway.** The [`Dockerfile`](./deploy/Dockerfile) runs on Node 26 (LTS) with Deno and the documentation site included. Its default command is `--http --public-docs` (the hosted anonymous docs-only service, which is what Railway runs; its settings are declared in [`.railway/railway.ts`](./.railway/railway.ts), the only Railway config file): set `CTGOV_PUBLIC_ORIGIN` (the image binds `0.0.0.0`), `CTGOV_CLIENT_IP_HEADER=x-real-ip` on Railway, and the health check path to `/health`. To offer `execute`, override the command with `--http` and configure an OIDC provider or account mode, as above. The gate, caches and per-IP limiter are in memory, so run **one replica** (and avoid deploys where an old and a new instance serve at the same time), or the process-wide upstream rate is no longer shared.
 
@@ -186,17 +205,17 @@ Every environment variable the server reads (`src/bin.ts`, plus the log level) a
 | `CTGOV_SANDBOX` | `auto` | `auto` / `isolate` / `deno` (same as `--sandbox`). |
 | `CTGOV_BASE_URL` | `https://clinicaltrials.gov/api/v2` | Upstream base URL (tests, mirrors). |
 | `CTGOV_RATE_PER_SEC` | `10` | Upstream requests per second, process-wide (8 in flight). |
-| `CTGOV_MAX_CONCURRENT_EXECUTIONS` / `CTGOV_MAX_EXECUTIONS_PER_SUBJECT` | `8` / `2` | Simultaneous executions per server / per caller (`Busy` beyond). |
+| `CTGOV_MAX_CONCURRENT_EXECUTIONS` / `CTGOV_MAX_EXECUTIONS_PER_SUBJECT` | `8` / `2` | Simultaneous executions per server / per caller: an authenticated subject, or the client address under `--insecure` (`Busy` beyond). |
 | `CTGOV_MAX_CALLS_PER_EXECUTE` | `100` | Upstream calls per `execute()` (`CallBudgetExceeded`). |
 | `CTGOV_SUBJECT_RATE_PER_HOUR` | `3000` | Upstream calls per authenticated subject per hour (HTTP only). |
 | `CTGOV_AUTH_PROVIDER` | `none` | `none` (only with `--insecure`, `--public-docs` or stdio) / `generic-oidc` / `clerk` / `workos` / `auth0` / `accounts`. Unknown values stop startup. |
 | `CTGOV_AUTH_ISSUER` / `CTGOV_AUTH_AUDIENCE` / `CTGOV_AUTH_JWKS_URL` | none | Required for OIDC providers (JWKS over https; http only on loopback). The audience is normally `https://<host>/mcp`. |
-| `CTGOV_AUTH_SCOPES` | `ctgov:read` | Comma-separated scopes every token must carry; advertised in resource metadata. |
+| `CTGOV_AUTH_SCOPES` | `ctgov:read` | Comma-separated scopes every OIDC token must carry; advertised in resource metadata. Ignored in account mode. |
 | `CTGOV_PUBLIC_ORIGIN` | none | Public origin clients reach (OAuth metadata, trusted Host). Required for authenticated or account HTTP beyond loopback; otherwise `CTGOV_ALLOWED_HOSTS` can replace it. |
-| `CTGOV_ALLOWED_HOSTS` | none | Extra accepted `Host` values (comma-separated). |
+| `CTGOV_ALLOWED_HOSTS` | none | Extra accepted `Host` values (comma-separated). Ignored in account mode, which trusts `CTGOV_PUBLIC_ORIGIN` only. |
 | `CTGOV_ALLOWED_ORIGINS` | none | Extra browser origins accepted on the anonymous `/mcp`. |
 | `CTGOV_IP_RPS` / `CTGOV_IP_BURST` | `5` / `20` | Per-IP token bucket on the HTTP transport. |
-| `CTGOV_CLIENT_IP_HEADER` | unset | Header your proxy overwrites with the client address (Railway: `x-real-ip`; an AWS ALB: `x-forwarded-for`, rightmost entry). Unset keys the limiter on the TCP peer. |
+| `CTGOV_CLIENT_IP_HEADER` | unset | Header your proxy overwrites with the client address (Railway: `x-real-ip`). Unset keys the limiter on the TCP peer. |
 | `DATABASE_URL` | none | Account mode: a dedicated PostgreSQL database. |
 | `BETTER_AUTH_SECRET` | none | Account mode: a random secret of at least 32 characters. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | Account mode: Google OAuth web application (redirect URI `https://<origin>/api/auth/callback/google`). |
@@ -204,7 +223,7 @@ Every environment variable the server reads (`src/bin.ts`, plus the log level) a
 | `CTGOV_SUBJECT_DAILY_QUOTA` | `10000` | Account mode: MCP requests per account per UTC day. |
 | `NODE_ENV` | production behaviour | Account mode: `development` or `test` allows an HTTP loopback `CTGOV_PUBLIC_ORIGIN`; anything else requires HTTPS. |
 
-CLI options: `--stdio` (default), `--http`, `--port`, `--host`, `--sandbox auto|isolate|deno`, `--public-docs`, `--insecure`, `--help`, `--version`. An unknown option or `--sandbox` value stops startup.
+CLI options: `--stdio` (default), `--http`, `--port`, `--host`, `--sandbox auto|isolate|deno`, `--public-docs`, `--insecure`, `--help` (`-h`), `--version` (`-v`). An unknown option or `--sandbox` value stops startup.
 
 ## Security
 
@@ -212,7 +231,7 @@ User code is sandboxed by design: no network, filesystem, env, or subprocess acc
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the dev setup and ground rules, and please open an issue before anything non-trivial. For questions and help, see [`SUPPORT.md`](./SUPPORT.md). By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md). Upgrading from the `0.1.0-alpha.0` development line: [`docs/migration-0.1.md`](./docs/migration-0.1.md).
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the dev setup and ground rules, and please open an issue before anything non-trivial. For questions and help, see [`SUPPORT.md`](./SUPPORT.md). By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## License
 
@@ -222,10 +241,12 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the dev setup and ground rules, a
 
 The BLEN-hosted connector's [Privacy Policy](./legal/privacy-policy.md) and
 [Terms of Service](./legal/terms.md) describe data handling and conditions of
-use; [`legal/support.md`](./legal/support.md) lists response targets, and
-[`legal/submission-packet.md`](./legal/submission-packet.md) holds the Claude
-connector directory submission. The software remains licensed under Apache-2.0;
-self-hosted operators are responsible for their own policies.
+use. The software remains licensed under Apache-2.0; self-hosted operators
+are responsible for their own policies.
+
+## Repository and hosting
+
+The project is at <https://github.com/blencorp/clinicaltrials-mcp-server> and its hosted service at `https://clinicaltrials.mcp.blencorp.com`. It is expected to move to another GitHub organization and domain. Both addresses are written once in [`site/product.mjs`](./site/product.mjs) (`repo`, `site`) for the documentation site, and the server's own code takes the repository address from [`src/project.ts`](./src/project.ts) and the MCPB manifest from `package.json`. They also appear, as plain text, in these places, which a move changes by hand: this README and its badges, `package.json` (`homepage`, `repository`, `bugs`), `web/src/brand.tsx` (`repoUrl`), the pages of `site/src/content/docs/`, the legal policies, `SECURITY.md`, `SUPPORT.md`, `CONTRIBUTING.md`, `docs/accessibility.md`, `.env.example`, `.github/ISSUE_TEMPLATE/`, `.railway/railway.ts` (deployment settings, not documentation) and `scripts/check-directory-compliance.ts`. `grep -rnE "blencorp/clinicaltrials|clinicaltrials.mcp.blencorp" .` finds them all.
 
 ## Acknowledgements
 

@@ -125,7 +125,7 @@ describe("anonymous endpoint (--insecure) in both protocol eras", () => {
     const r = await rpc(base, "server/discover");
     expect(r.status).toBe(200);
     expect(r.body.result.supportedVersions).toContain(PROTOCOL_VERSION);
-    expect(r.body.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("clinicaltrial-mcp-server");
+    expect(r.body.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("clinicaltrials-mcp-server");
   });
 
   it("modern era: a search_api call returns compact JSON text and structuredContent", async () => {

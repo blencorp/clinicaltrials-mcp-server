@@ -1,4 +1,5 @@
 import type { AuthConfig } from "./authz.js";
+import { REPOSITORY_URL } from "../project.js";
 
 /** RFC 9728 path-suffixed metadata location for the `/mcp` resource. */
 export const RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
@@ -15,8 +16,8 @@ export function protectedResourceMetadata(cfg: AuthConfig, resourceUrl: string):
     authorization_servers: cfg.issuer ? [cfg.issuer] : [],
     bearer_methods_supported: ["header"],
     scopes_supported: cfg.scopes ?? [],
-    resource_documentation: "https://github.com/blencorp/clinicaltrials-mcp-server#readme",
-    resource_policy_uri: "https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/terms.md",
+    resource_documentation: `${REPOSITORY_URL}#readme`,
+    resource_policy_uri: `${REPOSITORY_URL}/blob/main/legal/terms.md`,
     resource_name: "ClinicalTrials.gov MCP",
   };
 }

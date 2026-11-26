@@ -392,9 +392,11 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
         expect(page.body).not.toMatch(/<script(?![^>]*\bsrc=)/);
       }
     }
-    // The privacy policy describes this mode: Google identity and hashed tokens, and no API keys.
+    // The privacy policy covers this mode as a self-hosted option (Google identity and hashed
+    // tokens), says BLEN's hosted service has no accounts, and that there are no API keys.
     const text = plain((await navigate('/privacy-policy')).body);
-    expect(text).toMatch(/Google account identity/);
+    expect(text).toMatch(/Google identity/);
+    expect(text).toMatch(/hosted Service has no accounts/);
     expect(text).toMatch(/hashed/);
     expect(text).toMatch(/no API keys/i);
   });

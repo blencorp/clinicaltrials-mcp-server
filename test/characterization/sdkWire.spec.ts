@@ -1,7 +1,6 @@
 // Characterization: the SDK wire behaviour of every ctgov.* RPC method (query serialization,
 // validation) and of the HttpClient underneath it. Pinned on v1, then updated for the SDK v2 port
-// (D4: zod 4) and for package C (rows C5-C8 in docs/migration-0.1.md: named errors, the new
-// HttpClient retry/cache rules, no searchAll). Retry, abort, size-cap and gate behaviour in depth is
+// (zod 4) and for package C (named errors, the new HttpClient retry/cache rules, no searchAll). Retry, abort, size-cap and gate behaviour in depth is
 // in test/httpClient.spec.ts; this file pins what a caller sees.
 import { describe, expect, it } from "vitest";
 import { constantUpstream, fakeUpstream, sdkCall } from "./helpers.js";

@@ -20,10 +20,11 @@ hero:
 
 import { Card, CardGrid, LinkButton, LinkCard, Steps } from '@astrojs/starlight/components';
 import { bundleUrl, cursorLink, vscodeLink } from '../../lib/install';
+import { distribution } from '../../../product.mjs';
 
 ## Connect in one step
 
-Each button starts the server on your computer. ClinicalTrials.gov is public, so [no key is
+The server runs on your computer. ClinicalTrials.gov is public, so [no key is
 needed](/keys/).
 
 <CardGrid>
@@ -32,11 +33,11 @@ needed](/keys/).
     description="Download the extension. Open the file, and Claude Desktop installs it."
     href={bundleUrl}
   />
-  <LinkCard title="Cursor" description="Add to Cursor. Cursor opens with the server filled in." href={cursorLink} />
-  <LinkCard title="VS Code" description="Add to VS Code. VS Code shows the server for review." href={vscodeLink} />
+  {distribution.npm && <LinkCard title="Cursor" description="Add to Cursor. Cursor opens with the server filled in." href={cursorLink} />}
+  {distribution.npm && <LinkCard title="VS Code" description="Add to VS Code. VS Code shows the server for review." href={vscodeLink} />}
   <LinkCard
     title="Other clients"
-    description="Claude Code, Gemini CLI, ChatGPT, and manual setup."
+    description={distribution.npm ? 'Claude Code, Gemini CLI, ChatGPT, and manual setup.' : 'ChatGPT and other remote clients, and the install status.'}
     href="/connect/"
   />
 </CardGrid>

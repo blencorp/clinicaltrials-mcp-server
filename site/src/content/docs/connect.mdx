@@ -1,10 +1,11 @@
 ---
 title: Connect your assistant
-description: Add the server to Claude Desktop, Claude Code, Cursor, VS Code, or Gemini CLI, and what ChatGPT and other remote clients need.
+description: Add the server to Claude Desktop, and, once it is on npm, Claude Code, Cursor, VS Code or Gemini CLI; and what ChatGPT and other remote clients need.
 ---
 
 import { Aside, Code, LinkButton } from '@astrojs/starlight/components';
 import { bundleUrl, claudeCodeCommand, cursorLink, mcpServersJson, vscodeLink } from '../../lib/install';
+import { distribution } from '../../../product.mjs';
 
 The server runs on your computer, and your assistant starts it. Before you connect, install
 [Node.js](https://nodejs.org/) 24.11 or later, or 26. You need no key: see [No key needed](/keys/).
@@ -15,6 +16,9 @@ The server runs on your computer, and your assistant starts it. Before you conne
 
 Open the downloaded `.mcpb` file, or drag it into the Claude Desktop window. Claude Desktop shows
 the extension for review, and then installs it.
+
+{distribution.npm ? (
+<>
 
 To set it up by hand, open **Settings → Developer → Edit Config**, add the server, and restart
 Claude Desktop:
@@ -54,17 +58,30 @@ Add the server to `~/.gemini/settings.json`, or to `.gemini/settings.json` in on
 
 <Code code={mcpServersJson} lang="json" title="settings.json" />
 
+</>
+) : (
+<Aside type="caution" title="Not on npm yet">
+  <p>
+    Cursor, VS Code, Claude Code and Gemini CLI start the server with <code>npx</code>, which works
+    once the package is published to npm. Until then, use the Claude Desktop extension above, or
+    build the server from source (the{' '}
+    <a href="https://github.com/blencorp/clinicaltrials-mcp-server#readme">README</a> shows how)
+    and point your client at the built <code>dist/bin.js</code>.
+  </p>
+</Aside>
+)}
+
 ## ChatGPT and other remote clients
 
 ChatGPT, Claude custom connectors, and Gemini Enterprise connect to a remote server over HTTPS. They
 do not start a server on your computer.
 
-BLEN hosts one at `https://clinicaltrials.mcp.blencorp.com/mcp/account`. Add that URL as a custom connector and sign in with Google
-when your client asks. You need no key, and the connection can run all three tools. Without
-signing in, `https://clinicaltrials.mcp.blencorp.com/mcp` offers the search and schema tools but cannot run code. The
-[account page](https://clinicaltrials.mcp.blencorp.com/account) shows both URLs and lets you sign out.
+BLEN hosts one at `https://clinicaltrials.mcp.blencorp.com/mcp`. Add that URL as a custom
+connector. There is no sign-in and no key. The hosted server offers `search_api` and
+`describe_schema`, so your assistant can look up the SDK and its fields, but it cannot run code. To
+run queries, connect a client that starts the server on your computer (above).
 
-To run your own instance instead, see [Self-host](/self-host/).
+To offer `execute` to a remote client, run your own instance: see [Self-host](/self-host/).
 
 ## Check that it works
 
@@ -79,8 +96,9 @@ The assistant calls `search_api` to find the right methods, then `execute` to ru
 | `ValidationError` | A program passed a parameter that the method does not take. | Read the message: it names the key. See the [SDK reference](/reference/sdk/#search-parameters). |
 | `NotFound` | The NCT ID is not in ClinicalTrials.gov. | Check the ID. It is `NCT` and eight digits. |
 | `ResultTooLarge` | A program returned more than 256 KiB. | Pass `fields`, and return only what you need. |
-| `SubjectQuotaExceeded` or `Busy` | On the hosted server, your account used its quota or its simultaneous runs. | Wait, and try again. See [Limits](/keys/#limits). |
+| `Busy` | The server is running its limit of programs at once. | Wait, and try again. See [Limits](/keys/#limits). |
 | `SandboxUnavailable` | No sandbox runtime is available for `execute`. | Install [Deno](https://docs.deno.com/runtime/getting_started/installation/). |
+| `Tool execute not found` | You are connected to the hosted `/mcp`, which has only the documentation tools. | Connect a client that runs the server on your computer. |
 
 <Aside>
   The built-in sandbox needs no install on Node.js 24 and 26 on macOS (Apple silicon), Linux (x64

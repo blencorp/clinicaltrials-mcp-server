@@ -9,7 +9,13 @@ import { buildManifest } from '../scripts/mcpb-prepare.mjs';
 // DXT-shaped manifest (top-level entry_point/runtime/transport, no author or
 // server) was rejected by `mcpb validate` and made packing impossible.
 describe('mcpb manifest', () => {
-  const pkg = { version: '9.9.9', engines: { node: '^24.11.0 || ^26.0.0' } };
+  const pkg = {
+    version: '9.9.9',
+    engines: { node: '^24.11.0 || ^26.0.0' },
+    repository: { type: 'git', url: 'git+https://github.com/example-org/ctgov-repo.git' },
+    homepage: 'https://github.com/example-org/ctgov-repo#readme',
+    bugs: { url: 'https://github.com/example-org/ctgov-repo/issues' },
+  };
 
   it('builds a v0.4 manifest with the required author and server blocks', () => {
     const m = buildManifest(pkg);
@@ -26,11 +32,14 @@ describe('mcpb manifest', () => {
     // MCPB manifest placeholder syntax, not a template literal.
     // eslint-disable-next-line no-template-curly-in-string
     expect(m.server.mcp_config.args).toEqual(['${__dirname}/dist/bin.js']);
-    // Links point at this repository, never at the playground it was split from.
-    expect(JSON.stringify(m)).not.toMatch(/claude-playground|blen-labs/);
-    for (const url of [m.repository.url, m.homepage, m.support, ...m.privacy_policies]) {
-      expect(url).toMatch(/^https:\/\/github\.com\/blencorp\/clinicaltrials-mcp-server/);
-    }
+    // Links come from package.json, so a repository move changes one file.
+    expect([m.repository.url, m.homepage, m.documentation, m.support, ...m.privacy_policies]).toEqual([
+      'https://github.com/example-org/ctgov-repo',
+      'https://github.com/example-org/ctgov-repo#readme',
+      'https://github.com/example-org/ctgov-repo#readme',
+      'https://github.com/example-org/ctgov-repo/issues',
+      'https://github.com/example-org/ctgov-repo/blob/main/legal/privacy-policy.md',
+    ]);
     expect(m.tools.map((t) => t.name)).toEqual(['search_api', 'describe_schema', 'execute']);
     // Legacy DXT keys must not reappear at the top level.
     expect('entry_point' in m).toBe(false);

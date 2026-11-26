@@ -1,4 +1,5 @@
 import type { Dispatcher } from 'undici';
+import { USER_AGENT } from '../project.js';
 import { sdkFromSources } from '../sdk/bindings.js';
 import { getSources } from '../sdk/sources/index.js';
 import type { SourceConfig } from '../sdk/sources/source.js';
@@ -98,7 +99,7 @@ export async function buildSupervisor(cfg: SupervisorConfig): Promise<CatalogDep
 
 /** Production defaults for everything the environment does not set (bin.ts maps the environment). */
 export const SUPERVISOR_DEFAULTS = {
-  userAgent: 'clinicaltrial-mcp-server (+https://github.com/blencorp/clinicaltrials-mcp-server)',
+  userAgent: USER_AGENT,
   upstreamTimeoutMs: 20_000,
   upstreamRetries: 3,
   cacheTtlMs: 300_000,
