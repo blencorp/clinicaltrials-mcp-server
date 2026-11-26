@@ -5,6 +5,16 @@ from `main` (see CONTRIBUTING.md, "Releasing").
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
+### Added
+- serve a docs-only landing page and rename the package to clinicaltrials-mcp-server
+
+### Fixed
+- copy the site product file into the build stage (docker)
+- link the hosted docs from the npm landing page, gate npm install docs, quote OIDC templates
+- skip a partial portal build, label portal failures, drop a dead changelog link
+
 ## [0.1.1] - 2026-11-26
 
 ### Fixed
@@ -68,6 +78,7 @@ First release. Nothing was published before it; the development line was `0.1.0-
 - The embedded authorization server and HTTP sessions are removed; the transport is stateless.
 - Node 24 or 26 is required (was Node 20.10 and later).
 
-[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/blencorp/clinicaltrials-mcp-server/releases/tag/v0.1.0
