@@ -5,6 +5,14 @@ from `main` (see CONTRIBUTING.md, "Releasing").
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-26
+
+### Fixed
+- admit bearer tokens by authenticated format before the failure budget (security)
+
+### Changed
+- derive the access-token prefix from its version (accounts)
+
 ## [0.2.0] - 2026-11-26
 
 ### Added
@@ -78,7 +86,8 @@ First release. Nothing was published before it; the development line was `0.1.0-
 - The embedded authorization server and HTTP sessions are removed; the transport is stateless.
 - Node 24 or 26 is required (was Node 20.10 and later).
 
-[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/blencorp/clinicaltrials-mcp-server/releases/tag/v0.1.0
