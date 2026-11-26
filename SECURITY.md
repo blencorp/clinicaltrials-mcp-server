@@ -8,7 +8,7 @@ open a private GitHub Security Advisory:
 > <https://github.com/blencorp/clinicaltrials-mcp-server/security/advisories/new>
 
 If that's not available, email **opensource@blencorp.com** with the subject
-`[security] clinicaltrial-mcp-server`, or contact the maintainers via the GitHub
+`[security] clinicaltrials-mcp-server`, or contact the maintainers via the GitHub
 organization page at <https://github.com/blencorp>.
 
 We try to respond within **3 business days**. A typical timeline for a

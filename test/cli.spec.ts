@@ -64,7 +64,7 @@ describe.skipIf(!built)("built CLI over stdio (dist/bin.js)", () => {
     // stdout carries nothing but JSON-RPC response frames (every line parsed in stdioSession).
     for (const f of run.frames) expect(f.jsonrpc).toBe("2.0");
     expect(run.frames.map((f) => f.id)).toEqual([1, 2, 3]);
-    expect(run.frames[0]!.result.serverInfo.name).toBe("clinicaltrial-mcp-server");
+    expect(run.frames[0]!.result.serverInfo.name).toBe("clinicaltrials-mcp-server");
     expect(run.frames[1]!.result.tools.map((t: { name: string }) => t.name)).toEqual(["search_api", "describe_schema", "execute"]);
     const call = run.frames[2]!.result;
     expect(call.isError).toBeFalsy();

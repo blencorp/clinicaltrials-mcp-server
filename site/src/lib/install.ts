@@ -10,8 +10,8 @@ export const bundleUrl = `${repo}/releases/latest/download/${repo.split('/').pop
 const command = 'npx';
 const args = ['-y', packageName];
 
-// ClinicalTrials.gov needs no key, so keyEnv is empty and the links and configs carry no
-// environment. A server with keys gives the deep links blank values (the server treats a blank key
+// ClinicalTrials.gov needs no key, so keyEnv is empty and the links and configs carry an empty
+// `env` object. A server with keys gives the deep links blank values (the server treats a blank key
 // as unset and says what is missing) and the pasted configs example values.
 const blankKeys = Object.fromEntries(keyEnv.map((name) => [name, '']));
 const exampleKeys = exampleKeyValues;

@@ -12,6 +12,8 @@ import { execFileSync } from 'node:child_process';
  * level). ClinicalTrials.gov needs no key, so there is no user_config and no env.
  */
 export function buildManifest(pkg) {
+  // The repository's address comes from package.json, so a move is changed there only.
+  const repo = pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, '');
   return {
     manifest_version: '0.4',
     name: 'clinicaltrials-mcp-server',
@@ -25,11 +27,11 @@ export function buildManifest(pkg) {
       'no API key is needed and nothing leaves your computer except those API requests. ' +
       'Independent open-source project; not affiliated with or endorsed by the U.S. National Library of Medicine or the NIH.',
     author: { name: 'BLEN, Inc.', url: 'https://blenlabs.com' },
-    repository: { type: 'git', url: 'https://github.com/blencorp/clinicaltrials-mcp-server' },
-    homepage: 'https://github.com/blencorp/clinicaltrials-mcp-server#readme',
-    documentation: 'https://github.com/blencorp/clinicaltrials-mcp-server#readme',
-    support: 'https://github.com/blencorp/clinicaltrials-mcp-server/issues',
-    privacy_policies: ['https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/legal/privacy-policy.md'],
+    repository: { type: 'git', url: repo },
+    homepage: pkg.homepage,
+    documentation: pkg.homepage,
+    support: pkg.bugs.url,
+    privacy_policies: [`${repo}/blob/main/legal/privacy-policy.md`],
     license: pkg.license,
     keywords: ['clinicaltrials', 'clinical trials', 'clinicaltrials.gov', 'nlm', 'studies', 'code mode'],
     tools: [

@@ -1,17 +1,17 @@
-# Terms of Service — ClinicalTrials.gov Explorer (by BLEN)
+# Terms of Service — ClinicalTrials.gov MCP (by BLEN)
 
-_Last updated: 2026-04-14_
+_Last updated: 2026-11-26_
 
 ## 1. Acceptance
 
-By installing or using **@blen/clinicaltrial-mcp-server** (the "Service", operated by Blen
-Corporation) you agree to these terms. If you do not agree, do not install
+By installing or using **@blen/clinicaltrials-mcp-server** (the "Service", operated by
+BLEN, Inc.) you agree to these terms. If you do not agree, do not install
 or use the Service.
 
 ## 2. No affiliation with ClinicalTrials.gov
 
 The Service is an independent client for the public ClinicalTrials.gov v2
-REST API. Blen is **not affiliated with, sponsored by, or endorsed by** the
+REST API. BLEN is **not affiliated with, sponsored by, or endorsed by** the
 U.S. National Institutes of Health (NIH), National Library of Medicine (NLM),
 or ClinicalTrials.gov. All study data is owned and curated by those
 organizations.
@@ -37,9 +37,10 @@ We may suspend or revoke access that violates this section.
 
 ## 5. Rate limits
 
-Fair-use limits apply: per-address request limits, hourly and daily limits per
-signed-in account, and a shared limit on calls to ClinicalTrials.gov. The
-operator may tune these without notice.
+Fair-use limits apply: per-address request limits on the BLEN-hosted endpoint
+and, wherever code runs, a shared limit on calls to ClinicalTrials.gov. Operators
+who self-host may add limits of their own. The limits may be tuned without
+notice.
 
 ## 6. Availability
 
@@ -48,7 +49,7 @@ Service will remain free of charge.
 
 ## 7. Liability
 
-To the maximum extent permitted by law, Blen Corporation disclaims all
+To the maximum extent permitted by law, BLEN, Inc. disclaims all
 liability for direct, indirect, incidental, special, or consequential damages
 arising from use of the Service.
 

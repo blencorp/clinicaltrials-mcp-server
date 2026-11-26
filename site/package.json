@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Documentation site for @blen/clinicaltrial-mcp-server (Astro Starlight, served at /docs by the hosted server).",
+  "description": "Documentation site for @blen/clinicaltrials-mcp-server (Astro Starlight, served at /docs by the hosted server).",
   "packageManager": "pnpm@12.21.0",
   "engines": {
     "node": "^24.11.0 || ^26.0.0"

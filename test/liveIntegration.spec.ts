@@ -7,7 +7,7 @@ const live = process.env.CTGOV_LIVE === "1";
 describe.skipIf(!live)("live integration (CT.gov)", () => {
   const sdk = buildSdk({
     baseUrl: "https://clinicaltrials.gov/api/v2",
-    userAgent: "clinicaltrial-mcp-server live test",
+    userAgent: "clinicaltrials-mcp-server live test",
     timeoutMs: 20_000,
     retries: 2,
     cacheTtlMs: 0,

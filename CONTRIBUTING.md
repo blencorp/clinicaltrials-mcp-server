@@ -220,7 +220,7 @@ the version `package.json` already declares, using its hand-written `CHANGELOG.m
 section (no bump, no release commit), and tags it. npm only offers trusted-publisher
 settings for a package that exists, so the trusted-publishing `publish` job cannot
 create the package: the very first version is staged once by a maintainer from the
-GitHub Release tarball, `npm stage publish blen-clinicaltrial-mcp-server-0.1.0.tgz
+GitHub Release tarball, `npm stage publish blen-clinicaltrials-mcp-server-0.1.0.tgz
 --access public`, then approved with 2FA on npmjs.com. Only after that can the
 trusted publisher (this repository, workflow `release.yml`, environment `npm`) be
 registered in the package settings, and from the next release on, `publish` does it

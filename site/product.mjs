@@ -2,13 +2,16 @@
 // by BLEN's MCP servers: to reuse it, change this file and the pages in src/content/docs/.
 // Read by astro.config.mjs, src/lib/install.ts and scripts/ (check-links, render-og,
 // sync-reference).
+//
+// `site` and `repo` are the two addresses to change when the project moves to another GitHub
+// organization or host (README "Repository and hosting" lists where else they are written).
 
 export const productName = 'ClinicalTrials.gov MCP';
 /** Where the hosted server serves this site (src/accounts/docs.ts serves it at `base`). */
 export const site = 'https://clinicaltrials.mcp.blencorp.com';
 export const base = '/docs';
 export const repo = 'https://github.com/blencorp/clinicaltrials-mcp-server';
-export const packageName = '@blen/clinicaltrial-mcp-server';
+export const packageName = '@blen/clinicaltrials-mcp-server';
 /**
  * How people can run the server. `npm`: a published package that desktop clients start with npx
  * (the install buttons and pasted configs on the overview and connect pages). `mcpb`: a Claude
@@ -30,10 +33,10 @@ export const keyEnv = [];
 export const exampleKeyValues = {};
 /** What llms.txt says about the product, above the page list. */
 export const llmsDetails = [
-  'Run it on your own computer, or connect to the hosted server. ClinicalTrials.gov is public, so no key is needed anywhere; the hosted server asks you to sign in only to run code.',
+  'Run it on your own computer, or connect to the hosted server. ClinicalTrials.gov is public, so no key is needed anywhere. The hosted server is anonymous and offers the documentation tools only (search_api and describe_schema, no sign-in); to run queries with execute, run the server on your computer.',
   'It has three tools: `search_api`, `describe_schema`, and `execute`.',
   'Each page below is also available on its own, as Markdown.',
 ].join('\n');
 
-/** Sidebar and page-title overrides by slug (see src/lib/pages.mjs); none for this server. */
-export const pageLabels = {};
+/** Sidebar and page-title overrides by slug (see src/lib/pages.mjs). */
+export const pageLabels = { keys: 'No key needed' };

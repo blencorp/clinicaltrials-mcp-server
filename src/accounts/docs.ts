@@ -94,3 +94,38 @@ export function docsRoute(root: string): express.Handler | undefined {
     res.redirect(301, `${DOCS_PATH}/${query === undefined ? '' : `?${query}`}`);
   };
 }
+
+/** The policy of the portal's own pages (landing, sign-in, policies): same-origin files only, nothing inline. */
+export const PORTAL_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+
+/** The pages of the anonymous `--public-docs` portal (web build mode `docs-only`), by URL path. */
+const PUBLIC_PORTAL_PAGES: Record<string, string> = {
+  '/': 'index.html',
+  '/privacy-policy': 'privacy-policy.html',
+  '/terms': 'terms.html',
+};
+
+/** Whether `path` is a page or asset that {@link publicPortalRoute} serves. */
+export function isPublicPortalPath(path: string): boolean {
+  return path.replace(/(?<=.)\/$/, '') in PUBLIC_PORTAL_PAGES || path.startsWith('/assets/');
+}
+
+/**
+ * The landing page, privacy policy and terms of the anonymous `--public-docs` server, with their
+ * assets: the `docs-only` build of web/ (dist/web-docs), which has no sign-in, account or consent
+ * pages because that server has no sessions. Undefined when it is not built (`pnpm build:web`).
+ */
+export function publicPortalRoute(root: string): express.Router | undefined {
+  if (!existsSync(join(root, 'index.html'))) return undefined;
+  const pages = new Map(Object.entries(PUBLIC_PORTAL_PAGES).map(([path, file]) => [path, readFileSync(join(root, file), 'utf8')]));
+  return express
+    .Router()
+    .use('/assets', express.static(join(root, 'assets'), { immutable: true, maxAge: '1y', index: false }))
+    .get([...pages.keys()], (req, res) => {
+      res
+        .set({ 'Content-Security-Policy': PORTAL_CSP, 'Cache-Control': 'public, max-age=300' })
+        .type('html')
+        .send(pages.get(req.path.replace(/(?<=.)\/$/, '')));
+    });
+}

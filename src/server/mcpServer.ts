@@ -51,7 +51,7 @@ function cachedSchema(key: string, jsonSchema: unknown): ReturnType<typeof fromJ
 
 export function buildMcpServer(deps: CatalogDeps, requestCtx?: RequestCtx): McpServer {
   const server = new McpServer(
-    { name: "clinicaltrial-mcp-server", version: SERVER_VERSION },
+    { name: "clinicaltrials-mcp-server", version: SERVER_VERSION },
     {
       capabilities: { tools: {} },
       instructions: SERVER_INSTRUCTIONS,

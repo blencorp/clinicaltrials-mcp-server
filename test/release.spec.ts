@@ -137,7 +137,7 @@ describe('isShippedPath', () => {
 
 describe('changedManifestFields', () => {
   const base = {
-    name: '@blen/clinicaltrial-mcp-server',
+    name: '@blen/clinicaltrials-mcp-server',
     version: '1.0.0',
     dependencies: { undici: '^8.12.4' },
     optionalDependencies: { 'isolated-vm': '^7.0.2' },
@@ -282,7 +282,7 @@ describe('updateVersionMarkers', () => {
   it('rewrites the version only on marker lines', () => {
     const src = [
       "const other = '1.2.3';",
-      "    { name: 'clinicaltrial-mcp-server', version: '2.0.0' }, // x-release-version",
+      "    { name: 'clinicaltrials-mcp-server', version: '2.0.0' }, // x-release-version",
     ].join('\n');
     const out = updateVersionMarkers(src, '2.0.1');
     expect(out).toContain("version: '2.0.1' }, // x-release-version");

@@ -9,7 +9,7 @@ endpoint. The server has a Streamable HTTP transport for that. Pick the mode by 
 | Mode | Who it serves | How to start it |
 | --- | --- | --- |
 | Local | You, on your computer | `--http --insecure` |
-| Documentation only | Anyone, with no sign-in. No `execute`. | `--http --public-docs` |
+| Documentation only | Anyone, with no sign-in. No `execute`. This is what BLEN's hosted server runs. | `--http --public-docs` |
 | OIDC | People with a token from your identity provider | `--http` with an OIDC provider |
 | Accounts | Many people, with Google sign-in | `--http` with `CTGOV_AUTH_PROVIDER=accounts` |
 
@@ -19,7 +19,7 @@ ClinicalTrials.gov needs no key, so none of the modes asks for one. The modes ex
 ## Local
 
 ```bash
-npx @blen/clinicaltrial-mcp-server --http --insecure --port 8080
+npx @blen/clinicaltrials-mcp-server --http --insecure --port 8080
 ```
 
 There is no sign-in. The server binds to `127.0.0.1` unless `--host` names another address.
@@ -28,12 +28,13 @@ There is no sign-in. The server binds to `127.0.0.1` unless `--host` names anoth
 
 ```bash
 CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
-  npx @blen/clinicaltrial-mcp-server --http --public-docs
+  npx @blen/clinicaltrials-mcp-server --http --public-docs
 ```
 
 `/mcp` is anonymous and offers `search_api` and `describe_schema`. It never runs code and needs
-no database. This is the default command of the Docker image, and it also serves this site at
-`/docs`.
+no database. It serves a landing page, the privacy policy and the terms, and this site at `/docs`,
+and none of them has a sign-in. This is the default command of the Docker image and the mode of
+BLEN's hosted server.
 
 ## OIDC
 
@@ -43,7 +44,7 @@ CTGOV_AUTH_ISSUER=https://<tenant>.clerk.accounts.dev \
 CTGOV_AUTH_AUDIENCE=https://your-host.example.com/mcp \
 CTGOV_AUTH_JWKS_URL=https://<tenant>.clerk.accounts.dev/.well-known/jwks.json \
 CTGOV_PUBLIC_ORIGIN=https://your-host.example.com \
-  npx @blen/clinicaltrial-mcp-server --http
+  npx @blen/clinicaltrials-mcp-server --http
 ```
 
 The issuer, the audience, and an HTTPS JWKS URL are all required. The provider can be `clerk`,
@@ -52,7 +53,7 @@ client the URL `https://your-host.example.com/mcp`.
 
 ## Accounts
 
-Account mode adds Google sign-in, an account page, and OAuth for MCP clients. `/mcp` stays
+Account mode is for a server you run yourself; BLEN's hosted server does not use it. It adds Google sign-in, an account page, and OAuth for MCP clients. `/mcp` stays
 anonymous and documentation-only, and `/mcp/account` runs code for signed-in people. It needs
 `CTGOV_PUBLIC_ORIGIN`, `DATABASE_URL` (PostgreSQL), `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, and
 `GOOGLE_CLIENT_SECRET`, and it serves this site at `/docs`. See the
@@ -68,8 +69,9 @@ override the command:
 docker run --rm -p 8080:8080 --env-file account.env <image> --http
 ```
 
-Railway builds the same Dockerfile. Set `CTGOV_PUBLIC_ORIGIN` and `CTGOV_CLIENT_IP_HEADER=x-real-ip`,
-and use `/health` as the health check. The
+Railway builds the same Dockerfile; its settings are declared in `.railway/railway.ts`. Set
+`CTGOV_PUBLIC_ORIGIN` and `CTGOV_CLIENT_IP_HEADER=x-real-ip`, and use `/health` as the health check.
+The
 [README](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/README.md#self-hosting-remote-http) walks through it.
 
 ## Rules for every deployment
@@ -81,6 +83,9 @@ and use `/health` as the health check. The
   `execute` is unavailable without it. The Docker image includes it.
 - **Pace the shared address.** ClinicalTrials.gov publishes no limit, and every caller's requests
   leave from your server. `CTGOV_RATE_PER_SEC` (10) and the per-account quotas keep it polite.
+- **Run one replica.** The upstream gate, the response cache and the per-address limiter live in
+  memory. With more than one replica, or an old and a new instance serving at once, the pace toward
+  ClinicalTrials.gov is no longer shared.
 - **Name the proxy header.** Behind a reverse proxy, set `CTGOV_CLIENT_IP_HEADER` to the header the
   proxy overwrites with the client address, so the per-address limit sees clients.
 
@@ -88,6 +93,6 @@ and use `/health` as the health check. The
 
 These documents are in the repository:
 
-- [Architecture](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/docs/ARCHITECTURE.md)
+- [Architecture](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/docs/architecture.md)
 - [Account mode](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/docs/accounts.md)
 - [Every setting](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/README.md#configuration)

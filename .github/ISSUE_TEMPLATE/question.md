@@ -19,7 +19,7 @@ labels: question
 
 ## Environment
 
-- Server version: <!-- the version your MCP client shows for clinicaltrial-mcp-server, or git SHA; npm view shows the newest release, not the one you run -->
+- Server version: <!-- the version your MCP client shows for clinicaltrials-mcp-server, or git SHA; npm view shows the newest release, not the one you run -->
 - Transport: <!-- stdio | http -->
 - MCP client: <!-- Claude Desktop, Cursor, VS Code, custom, etc. -->
 

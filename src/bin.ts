@@ -71,7 +71,7 @@ function parseArgs(argv: string[], env: NodeJS.ProcessEnv): ParsedArgs {
       printHelp();
       process.exit(0);
     } else if (a === "--version" || a === "-v") {
-      process.stdout.write(`@blen/clinicaltrial-mcp-server ${SERVER_VERSION}\n`);
+      process.stdout.write(`@blen/clinicaltrials-mcp-server ${SERVER_VERSION}\n`);
       process.exit(0);
     }
     // The separator some runners pass through (`pnpm dev -- --http`).
@@ -94,10 +94,10 @@ function parseArgs(argv: string[], env: NodeJS.ProcessEnv): ParsedArgs {
 function printHelp(): void {
   process.stdout.write(
     [
-      "clinicaltrial-mcp-server: code-mode MCP server for ClinicalTrials.gov",
+      "clinicaltrials-mcp-server: code-mode MCP server for ClinicalTrials.gov",
       "",
       "Usage:",
-      "  clinicaltrial-mcp-server [--stdio|--http] [--sandbox isolate|deno|auto]",
+      "  clinicaltrials-mcp-server [--stdio|--http] [--sandbox isolate|deno|auto]",
       "           [--port N] [--host ADDR] [--public-docs | --insecure]",
       "",
       "Transports:",

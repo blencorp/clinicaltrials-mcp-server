@@ -158,29 +158,36 @@ jobs:
           file: ./deploy/Dockerfile
           push: false
           load: true
-          tags: clinicaltrial-mcp-server:ci
+          tags: clinicaltrials-mcp-server:ci
       - name: Refuses authenticated HTTP without an auth provider
         run: |
-          if docker run --rm -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com clinicaltrial-mcp-server:ci --http; then echo "started without auth"; exit 1; fi
+          if docker run --rm -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com clinicaltrials-mcp-server:ci --http; then echo "started without auth"; exit 1; fi
       - name: Refuses --public-docs together with an auth provider
         run: |
-          if docker run --rm -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -e CTGOV_AUTH_PROVIDER=clerk clinicaltrial-mcp-server:ci --http --public-docs; then echo "started with a provider"; exit 1; fi
+          if docker run --rm -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -e CTGOV_AUTH_PROVIDER=clerk clinicaltrials-mcp-server:ci --http --public-docs; then echo "started with a provider"; exit 1; fi
       - name: Refuses account mode together with --public-docs or --insecure, and without --http
         run: |
           acct=(-e CTGOV_AUTH_PROVIDER=accounts -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -e DATABASE_URL=postgres://u:p@127.0.0.1:1/x -e BETTER_AUTH_SECRET=0123456789012345678901234567890123 -e GOOGLE_CLIENT_ID=i -e GOOGLE_CLIENT_SECRET=s)
-          if docker run --rm "${acct[@]}" clinicaltrial-mcp-server:ci --http --public-docs; then echo "started with --public-docs"; exit 1; fi
-          if docker run --rm "${acct[@]}" clinicaltrial-mcp-server:ci --http --insecure; then echo "started with --insecure"; exit 1; fi
-          if docker run --rm "${acct[@]}" clinicaltrial-mcp-server:ci; then echo "started without --http"; exit 1; fi
+          if docker run --rm "${acct[@]}" clinicaltrials-mcp-server:ci --http --public-docs; then echo "started with --public-docs"; exit 1; fi
+          if docker run --rm "${acct[@]}" clinicaltrials-mcp-server:ci --http --insecure; then echo "started with --insecure"; exit 1; fi
+          if docker run --rm "${acct[@]}" clinicaltrials-mcp-server:ci; then echo "started without --http"; exit 1; fi
       - name: Serves the docs-only default
         run: |
-          docker run -d --name smoke -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -p 127.0.0.1:8080:8080 clinicaltrial-mcp-server:ci
+          docker run -d --name smoke -e CTGOV_PUBLIC_ORIGIN=https://mcp.example.com -p 127.0.0.1:8080:8080 clinicaltrials-mcp-server:ci
           for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8080/health | grep -q '"protocol":"2026-07-28"'
+          # The hosted service is docs-only: a landing page and the policies, with no sign-in or account.
+          for page in / /privacy-policy /terms; do
+            curl -fsS -H 'Host: mcp.example.com' "http://127.0.0.1:8080$page" > page.html
+            grep -q '<h1' page.html
+            if grep -Eq 'href="(/sign-in|/account|/mcp/account)' page.html || grep -qi 'create an account' page.html; then echo "$page offers an account"; exit 1; fi
+          done
           docker rm -f smoke
+          docker run --rm --entrypoint sh clinicaltrials-mcp-server:ci -c 'test -s /app/LICENSE && test -s /app/NOTICE'
       - name: Runs execute in the Deno sandbox behind bearer authentication, and refuses it docs-only
         # Inside the image: an http JWKS URL is only accepted on loopback, and loopback is the container.
         run: |
-          docker run --rm -v "$PWD/scripts/docker-smoke.mjs:/app/docker-smoke.mjs:ro" --entrypoint node clinicaltrial-mcp-server:ci docker-smoke.mjs
+          docker run --rm -v "$PWD/scripts/docker-smoke.mjs:/app/docker-smoke.mjs:ro" --entrypoint node clinicaltrials-mcp-server:ci docker-smoke.mjs
 
   conventional-commits:
     name: conventional commits

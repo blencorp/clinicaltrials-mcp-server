@@ -1,6 +1,6 @@
 ---
 title: Security
-description: What the sandbox allows, what the hosted server stores, and how to report a vulnerability.
+description: What the sandbox allows, what the hosted server does and stores, and how to report a vulnerability.
 ---
 
 The server runs code that a model wrote, and it treats that code as untrusted.
@@ -12,22 +12,29 @@ The server runs code that a model wrote, and it treats that code as untrusted.
 - **A check before the run.** The server parses each program and rejects imports, `eval`, and
   references to host globals.
 - **An isolated runtime.** The program runs in a fresh V8 isolate, or in a separate Deno process
-  with no permissions. With sign-in, the server uses the Deno process only.
+  with no permissions. A server with sign-in uses the Deno process only.
 - **A deadline that the server owns.** The server stops a run that passes its time limit, and a run
   that grows past its memory limit.
 - **One way out.** A program reaches ClinicalTrials.gov only through the registered read methods of
   the `ctgov` SDK, and every call counts against the budget of the run.
 
-## Accounts
+## The hosted server
 
-- ClinicalTrials.gov needs no key, so the server holds no API key of anyone's.
-- The hosted server stores your Google identity, hashed OAuth tokens, and per-account counters. See
-  [What the server stores](/keys/#what-the-server-stores).
-- Each request to `/mcp/account` checks its token against the database, so revoking a connection
-  takes effect at once. The server also checks the `Host` header against its own address, so a
-  web page cannot reach it by DNS rebinding.
-- The documentation site is served with its own content security policy, because it shares an origin
-  with the sign-in pages.
+- BLEN's hosted server is anonymous and offers only `search_api` and `describe_schema`. It runs no
+  code, has no database, and stores nothing about you. See
+  [What the hosted server stores](/keys/#what-the-hosted-server-stores).
+- ClinicalTrials.gov needs no key, so no server holds an API key of anyone's.
+- Every server checks the `Host` header against its own address, so a web page cannot reach it by
+  DNS rebinding, and the anonymous endpoint refuses browser origins it does not know.
+- The documentation site is served with its own content security policy.
+
+## Servers with sign-in
+
+If you host the server yourself with OIDC or account mode, each request carries a token that the
+server checks, and it runs code only in the separate Deno process. In account mode the server
+stores the signed-in person's Google identity, hashed OAuth tokens, and per-account counters, and
+a revoked connection stops working at once. See the
+[account mode guide](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/docs/accounts.md).
 
 ## What the server does not do
 
@@ -39,5 +46,5 @@ The server runs code that a model wrote, and it treats that code as untrusted.
 Do not open a public issue. Open a
 [private security advisory](https://github.com/blencorp/clinicaltrials-mcp-server/security/advisories/new),
 or email opensource@blencorp.com with the subject
-`[security] clinicaltrial-mcp-server`. The full policy is in
+`[security] clinicaltrials-mcp-server`. The full policy is in
 [SECURITY.md](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/SECURITY.md).

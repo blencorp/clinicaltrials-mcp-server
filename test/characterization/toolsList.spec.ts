@@ -1,6 +1,6 @@
 // Characterization: pins the tools/list contract (names, titles, descriptions, inputSchema,
 // outputSchema, annotations) for the `all` and `docs-only` modes. Pinned on v1 originally; updated
-// for the SDK v2 port against the expected-diff list in docs/migration-0.1.md (D7), and again for package C (C1/C4/C9: tool descriptions, the execute output schema, uspto's result schemas, execute limits as defaults). The JSON
+// for the SDK v2 port, and again for package C (tool descriptions, the execute output schema, uspto's result schemas, execute limits as defaults). The JSON
 // fixtures under __fixtures__ are the reference copies.
 import { SERVER_VERSION } from "../../src/server/mcpServer.js";
 import { describe, expect, it } from "vitest";
@@ -81,7 +81,7 @@ describe("tools/list", () => {
   it("advertises the tools capability, the server info and the workflow instructions", async () => {
     const c = await connect({});
     try {
-      expect(c.client.getServerVersion()).toEqual({ name: "clinicaltrial-mcp-server", version: SERVER_VERSION });
+      expect(c.client.getServerVersion()).toEqual({ name: "clinicaltrials-mcp-server", version: SERVER_VERSION });
       expect(c.client.getServerCapabilities()).toEqual({ tools: { listChanged: true } });
       expect(c.client.getInstructions()).toMatch(/^ClinicalTrials\.gov through code mode\./);
     } finally {

@@ -31,7 +31,7 @@ best-effort basis by the maintainers.
 
 A report we can act on has:
 
-- the server version (the version your MCP client shows for `clinicaltrial-mcp-server`, or
+- the server version (the version your MCP client shows for `clinicaltrials-mcp-server`, or
   your git SHA; `npm view` shows the newest release, not the one you run), the transport
   (stdio or HTTP), the sandbox runner (`isolate` or `deno`), your Node version and your MCP
   client;

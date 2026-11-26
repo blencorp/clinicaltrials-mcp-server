@@ -7,7 +7,7 @@
  *   - POST /mcp without auth -> 401 + WWW-Authenticate + resource_metadata=...
  *   - /health -> 200
  *   - examples/ count >= 3
- *   - legal/{privacy-policy,terms,support}.md present
+ *   - legal/{privacy-policy,terms}.md and SUPPORT.md present
  *
  * Usage:
  *   pnpm check:directory https://clinicaltrials.mcp.blencorp.com
@@ -81,9 +81,9 @@ await check("3+ example prompts present", async () => {
   if (mds.length < 3) throw new Error(`found ${mds.length}, need >= 3`);
 });
 
-await check("legal/{privacy-policy,terms,support}.md present", async () => {
-  for (const f of ["privacy-policy.md", "terms.md", "support.md"]) {
-    if (!existsSync(resolve("legal", f))) throw new Error(`missing legal/${f}`);
+await check("legal/{privacy-policy,terms}.md and SUPPORT.md present", async () => {
+  for (const f of ["legal/privacy-policy.md", "legal/terms.md", "SUPPORT.md"]) {
+    if (!existsSync(resolve(f))) throw new Error(`missing ${f}`);
   }
 });
 

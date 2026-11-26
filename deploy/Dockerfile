@@ -60,6 +60,8 @@ COPY --chown=ctgov:ctgov schema ./schema
 # --public-docs and by account mode.
 COPY --from=docs --chown=ctgov:ctgov /repo/site/dist ./docs-site
 COPY --chown=ctgov:ctgov package.json ./
+# Apache-2.0 section 4: the license and notices travel with every redistributed copy.
+COPY --chown=ctgov:ctgov LICENSE NOTICE ./
 
 USER ctgov
 ENV NODE_ENV=production \

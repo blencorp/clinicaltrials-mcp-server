@@ -13,14 +13,14 @@
       "kind": "endpoint",
       "binding": "ctgov",
       "signature": "ctgov.studies.search(params)",
-      "description": "Search studies (GET /studies) by condition, intervention, location, sponsor or free text, with status and geo filters. Parameters are FLAT dotted string keys, never nested objects: 'query.cond', 'query.term', 'query.intr', 'query.locn', 'query.spons', 'filter.overallStatus' (array of status enums), 'filter.geo', 'filter.advanced' (Essie expression); plus fields, sort, countTotal, pageSize (1-1000) and pageToken. See ctgov.syntax.search, ctgov.syntax.essie, ctgov.syntax.geo and ctgov.syntax.paging. Returns { studies: [...], nextPageToken?, totalCount? }. Always pass fields: full study records are large and a result over 256 KiB fails.",
+      "description": "Search studies (GET /studies) by condition, intervention, location, sponsor or free text, with status and geo filters. Parameters are FLAT dotted string keys, never nested objects: 'query.cond', 'query.term', 'query.intr', 'query.locn', 'query.spons', 'query.lead', 'filter.overallStatus' (array of status enums), 'filter.geo', 'filter.advanced' (Essie expression); plus fields, sort, countTotal, pageSize (0-1000) and pageToken. See ctgov.syntax.search, ctgov.syntax.essie, ctgov.syntax.geo and ctgov.syntax.paging. Returns { studies: [...], nextPageToken?, totalCount? }. Always pass fields: full study records are large and a result over 256 KiB fails.",
       "example": "const page = await ctgov.studies.search({ 'query.cond': 'lung cancer', 'filter.overallStatus': ['RECRUITING'], fields: ['NCTId', 'BriefTitle', 'Phase'], pageSize: 20, countTotal: true }); return { total: page.totalCount, studies: page.studies.map(s => s.protocolSection.identificationModule) }"
     },
     {
       "id": "ctgov.studies.get",
       "kind": "endpoint",
       "binding": "ctgov",
-      "signature": "ctgov.studies.get(nctId, { fields?, format?, markupFormat? })",
+      "signature": "ctgov.studies.get(nctId, opts?: { fields?, format?, markupFormat? })",
       "description": "One study by NCT ID (GET /studies/{nctId}); nctId must match NCT followed by 8 digits. fields projects the record (piece names or dotted module names). format is 'json' (default, parsed), 'csv', 'fhir.json' or 'ris'; csv and ris come back as raw text. Returns the study object ({ protocolSection, resultsSection?, derivedSection?, hasResults }).",
       "example": "const s = await ctgov.studies.get('NCT04852770', { fields: ['NCTId', 'BriefTitle', 'OverallStatus', 'EligibilityCriteria'] }); return s.protocolSection"
     },
@@ -28,7 +28,7 @@
       "id": "ctgov.studies.metadata",
       "kind": "endpoint",
       "binding": "ctgov",
-      "signature": "ctgov.studies.metadata({ includeIndexedOnly?, includeHistoricOnly? })",
+      "signature": "ctgov.studies.metadata(opts?: { includeIndexedOnly?, includeHistoricOnly? })",
       "description": "The study data model (GET /studies/metadata): a tree of field nodes with name, piece (the name to use in fields), type, sourceType and children. Large; filter it in the sandbox and return only the matching nodes. Use describe_schema for the curated field list first.",
       "example": "const tree = await ctgov.studies.metadata(); return tree.map(n => ({ name: n.name, piece: n.piece, children: (n.children ?? []).length }))"
     },
@@ -86,7 +86,7 @@
       "id": "ctgov.syntax.search",
       "kind": "field",
       "binding": "ctgov",
-      "description": "Query syntax of ctgov.studies.search. Flat dotted string keys (never nested objects): 'query.cond', 'query.term', 'query.intr', 'query.locn', 'query.spons', 'query.titles', 'query.outc', 'query.id', 'query.patient' take natural text or Essie expressions (AND, OR, NOT, quotes, parentheses); 'filter.overallStatus' and 'postFilter.overallStatus' take enum arrays; 'filter.ids' takes NCT ids; 'filter.advanced' takes an Essie expression; sort takes 'FieldName:asc|desc' or '@relevance'. Unknown keys are rejected with a ValidationError.",
+      "description": "Query syntax of ctgov.studies.search. Flat dotted string keys (never nested objects): 'query.cond', 'query.term', 'query.intr', 'query.locn', 'query.spons', 'query.lead', 'query.titles', 'query.outc', 'query.id', 'query.patient' take natural text or Essie expressions (AND, OR, NOT, quotes, parentheses); 'filter.overallStatus' and 'postFilter.overallStatus' take enum arrays; 'filter.ids' takes NCT ids; 'filter.advanced' takes an Essie expression; sort takes 'FieldName:asc|desc' or '@relevance'. Unknown keys are rejected with a ValidationError.",
       "example": "await ctgov.studies.search({ 'query.cond': 'diabetes', 'query.intr': 'semaglutide', 'filter.overallStatus': ['RECRUITING', 'NOT_YET_RECRUITING'], sort: ['LastUpdatePostDate:desc'], fields: ['NCTId', 'BriefTitle'], pageSize: 10 })"
     },
     {
@@ -107,7 +107,7 @@
       "id": "ctgov.syntax.paging",
       "kind": "field",
       "binding": "ctgov",
-      "description": "Paging: each studies.search call returns one page of at most pageSize studies (1-1000, default 10) and, when more remain, nextPageToken. Pass it back as pageToken with the SAME other parameters to get the next page; stop when nextPageToken is missing. countTotal: true adds totalCount (send it on the first page only). There is no searchAll helper: loop with a bounded page count, since every page is one call against the per-execute budget.",
+      "description": "Paging: each studies.search call returns one page of at most pageSize studies (0-1000, default 10) and, when more remain, nextPageToken. Pass it back as pageToken with the SAME other parameters to get the next page; stop when nextPageToken is missing. countTotal: true adds totalCount (send it on the first page only). There is no searchAll helper: loop with a bounded page count, since every page is one call against the per-execute budget.",
       "example": "const out = []; let pageToken; for (let i = 0; i < 5; i++) { const page = await ctgov.studies.search({ 'query.cond': 'melanoma', fields: ['NCTId'], pageSize: 100, ...(pageToken ? { pageToken } : {}) }); out.push(...page.studies.map(s => s.protocolSection.identificationModule.nctId)); pageToken = page.nextPageToken; if (!pageToken) break; } return out"
     },
     {
@@ -126,7 +126,7 @@
       "id": "ctgov.syntax.errors",
       "kind": "field",
       "binding": "ctgov",
-      "description": "SDK errors keep name, message and status inside the sandbox: ValidationError (bad arguments; never sent upstream), NotFound (404), BadRequest (400, with the upstream reason), RateLimited (429 or this server's request queue is full), UpstreamTimeout, UpstreamUnavailable, ResponseTooLarge (the upstream body exceeded the response cap: use a smaller pageSize or fields), CallBudgetExceeded, SubjectQuotaExceeded. Catch them with try/catch and inspect e.name and e.status."
+      "description": "SDK errors keep name, message and status inside the sandbox: ValidationError (bad arguments; never sent upstream), NotFound (404), BadRequest (400, with the upstream reason), RateLimited (429 or this server's request queue is full), UpstreamTimeout, UpstreamUnavailable, HttpError (any other upstream status of 400 or above, including 5xx), ResponseTooLarge (the upstream body exceeded the response cap: use a smaller pageSize or fields), CallBudgetExceeded, SubjectQuotaExceeded, QuotaUnavailable (the hourly quota could not be checked). Catch them with try/catch and inspect e.name and e.status."
     },
     {
       "id": "ctgov.fields.protocolSection.identificationModule.nctId",

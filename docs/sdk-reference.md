@@ -82,11 +82,33 @@ An NCT id is `NCT` followed by eight digits. `studies.get` validates it before a
 
 ## Errors
 
-SDK errors keep `name`, `message` and `status` inside the sandbox and in the `execute` result's
-`error`: `ValidationError` (bad arguments, never sent upstream), `BadRequest` (400), `NotFound` (404),
-`RateLimited` (429, or this server's request queue is full), `UpstreamTimeout`, `UpstreamUnavailable`,
-`HttpError` (other 5xx), `ResponseTooLarge`, `CallBudgetExceeded` and `SubjectQuotaExceeded`.
-Validation messages are short and name the offending key.
+An SDK call that fails throws an `Error` whose `name` is below and whose `status` carries the HTTP
+code where there is one. Uncaught, it ends the execution: the `execute` result is
+`{ ok: false, error: { name, message, status? }, logs, durationMs }`, sent with `isError: true`. Use
+`try/catch` to handle it inline. Validation messages are short and name the offending key.
+
+| `name` | Meaning |
+|---|---|
+| `ValidationError` | Bad arguments (an unknown key, a nested object, a malformed NCT id); never sent upstream. |
+| `TypeError` | The call itself is malformed: an unknown method, or arguments that are not JSON. No request was made. |
+| `BadRequest` | Upstream `400`; the message carries the upstream reason. |
+| `NotFound` | Upstream `404`. |
+| `RateLimited` | Upstream `429` (every caller is paused for the `Retry-After`), or this server's request queue is full. Don't retry immediately. |
+| `UpstreamTimeout` / `UpstreamUnavailable` | The request timed out, or the network or upstream failed after the retries. |
+| `HttpError` | Any other upstream status of 400 or above, including `5xx`; `status` carries the HTTP code. |
+| `ResponseTooLarge` | An upstream response exceeded 8 MiB: pass `fields` and a smaller `pageSize`. |
+| `CallBudgetExceeded` | This `execute()` made more than its budget of SDK calls (100). |
+| `SubjectQuotaExceeded` / `QuotaUnavailable` | Your hourly quota on this server is used up, or could not be checked (HTTP with accounts or OIDC only). |
+| `ArgumentsTooLarge` / `TooManyPendingCalls` | One SDK call's arguments exceeded 64 KiB, or more than 100 calls were pending at once. |
+
+Execution-level errors come back in the `execute` result and are not thrown by SDK calls:
+`ResultTooLarge` (the returned value is over 256 KiB: return less), `CodeTooLarge` (over 256 KiB of
+code), `TimeoutError`, `MemoryLimitExceeded` (the program outgrew `memoryMb`: ask for fewer records or
+work in smaller steps), `AbortError` (the client cancelled, or the server is shutting down), `Busy`
+(too many executions running), `PolicyError` (the code uses a banned construct, or TypeScript
+syntax), `OutputTooLarge` (the Deno sandbox wrote more than its output limit) and
+`SandboxUnavailable` (no runner is installed; see the README's "Sandbox runtimes"). Logs are capped at
+64 KiB or 1,000 lines.
 
 ## Method reference
 
@@ -98,13 +120,13 @@ _Generated from `schema/ctgov.json`; edit it, then run `node scripts/gen-sdk-ref
 
 #### `ctgov.studies.search(params)`
 
-Search studies (GET /studies) by condition, intervention, location, sponsor or free text, with status and geo filters. Parameters are FLAT dotted string keys, never nested objects: 'query.cond', 'query.term', 'query.intr', 'query.locn', 'query.spons', 'filter.overallStatus' (array of status enums), 'filter.geo', 'filter.advanced' (Essie expression); plus fields, sort, countTotal, pageSize (1-1000) and pageToken. See ctgov.syntax.search, ctgov.syntax.essie, ctgov.syntax.geo and ctgov.syntax.paging. Returns { studies: [...], nextPageToken?, totalCount? }. Always pass fields: full study records are large and a result over 256 KiB fails.
+Search studies (GET /studies) by condition, intervention, location, sponsor or free text, with status and geo filters. Parameters are FLAT dotted string keys, never nested objects: 'query.cond', 'query.term', 'query.intr', 'query.locn', 'query.spons', 'query.lead', 'filter.overallStatus' (array of status enums), 'filter.geo', 'filter.advanced' (Essie expression); plus fields, sort, countTotal, pageSize (0-1000) and pageToken. See ctgov.syntax.search, ctgov.syntax.essie, ctgov.syntax.geo and ctgov.syntax.paging. Returns { studies: [...], nextPageToken?, totalCount? }. Always pass fields: full study records are large and a result over 256 KiB fails.
 
 ```js
 const page = await ctgov.studies.search({ 'query.cond': 'lung cancer', 'filter.overallStatus': ['RECRUITING'], fields: ['NCTId', 'BriefTitle', 'Phase'], pageSize: 20, countTotal: true }); return { total: page.totalCount, studies: page.studies.map(s => s.protocolSection.identificationModule) }
 ```
 
-#### `ctgov.studies.get(nctId, { fields?, format?, markupFormat? })`
+#### `ctgov.studies.get(nctId, opts?: { fields?, format?, markupFormat? })`
 
 One study by NCT ID (GET /studies/{nctId}); nctId must match NCT followed by 8 digits. fields projects the record (piece names or dotted module names). format is 'json' (default, parsed), 'csv', 'fhir.json' or 'ris'; csv and ris come back as raw text. Returns the study object ({ protocolSection, resultsSection?, derivedSection?, hasResults }).
 
@@ -112,7 +134,7 @@ One study by NCT ID (GET /studies/{nctId}); nctId must match NCT followed by 8 d
 const s = await ctgov.studies.get('NCT04852770', { fields: ['NCTId', 'BriefTitle', 'OverallStatus', 'EligibilityCriteria'] }); return s.protocolSection
 ```
 
-#### `ctgov.studies.metadata({ includeIndexedOnly?, includeHistoricOnly? })`
+#### `ctgov.studies.metadata(opts?: { includeIndexedOnly?, includeHistoricOnly? })`
 
 The study data model (GET /studies/metadata): a tree of field nodes with name, piece (the name to use in fields), type, sourceType and children. Large; filter it in the sandbox and return only the matching nodes. Use describe_schema for the curated field list first.
 
