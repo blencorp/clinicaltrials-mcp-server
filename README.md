@@ -200,6 +200,7 @@ Every environment variable the server reads (`src/bin.ts`, plus the log level) a
 | `DATABASE_URL` | none | Account mode: a dedicated PostgreSQL database. |
 | `BETTER_AUTH_SECRET` | none | Account mode: a random secret of at least 32 characters. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | Account mode: Google OAuth web application (redirect URI `https://<origin>/api/auth/callback/google`). |
+| `CTGOV_AUTH_LOCK_POOL_SIZE` | `10` | Account mode: connections (2 to 200) reserved per replica for OAuth token locks, in addition to the main pool; see [docs/accounts.md](docs/accounts.md). |
 | `CTGOV_SUBJECT_DAILY_QUOTA` | `10000` | Account mode: MCP requests per account per UTC day. |
 | `NODE_ENV` | production behaviour | Account mode: `development` or `test` allows an HTTP loopback `CTGOV_PUBLIC_ORIGIN`; anything else requires HTTPS. |
 

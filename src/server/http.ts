@@ -12,7 +12,7 @@ import type { RequestCtx } from "../tools/execute.js";
 import { logger } from "../util/logger.js";
 import { AuthConfigError, InsufficientScopeError, buildVerifier, type AuthConfig } from "./authz.js";
 import { DOCS_PATH, docsRoute } from "../accounts/docs.js";
-import { IpRateLimiter, clientIp } from "./ipRateLimiter.js";
+import { IpRateLimiter, bucketKey, clientIp } from "./ipRateLimiter.js";
 import { MCP_PROTOCOL_VERSION, SERVER_VERSION, buildMcpServer } from "./mcpServer.js";
 import {
   RESOURCE_METADATA_PATH,
@@ -421,7 +421,7 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
       clientId: subject ?? "anonymous",
       scopes,
       // Authenticated callers are limited per subject; an anonymous one (--insecure) per client address.
-      extra: subject !== undefined ? { [SUBJECT_KEY]: subject } : { [CLIENT_KEY]: `ip:${clientIp(req, opts.clientIpHeader)}` },
+      extra: subject !== undefined ? { [SUBJECT_KEY]: subject } : { [CLIENT_KEY]: `ip:${bucketKey(clientIp(req, opts.clientIpHeader))}` },
     };
     (req as IncomingMessage & { auth?: AuthInfo }).auth = authInfo;
     await nodeHandler(req as Parameters<typeof nodeHandler>[0], res);

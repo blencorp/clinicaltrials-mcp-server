@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { IncomingMessage } from "node:http";
-import { IpRateLimiter, clientIp } from "../src/server/ipRateLimiter.js";
+import { IpRateLimiter, bucketKey, clientIp } from "../src/server/ipRateLimiter.js";
 
 const req = (peer: string, headers: Record<string, string | string[]> = {}): IncomingMessage =>
   ({ socket: { remoteAddress: peer }, headers }) as unknown as IncomingMessage;
@@ -10,15 +10,6 @@ describe("IpRateLimiter", () => {
     const lim = new IpRateLimiter(1, 3);
     expect([1, 2, 3, 4].map(() => lim.allow("1.2.3.4"))).toEqual([true, true, true, false]);
     expect(lim.allow("5.6.7.8")).toBe(true);
-  });
-
-  it("refunds a spent token, up to burst", () => {
-    const lim = new IpRateLimiter(0, 1);
-    expect(lim.allow("1.2.3.4")).toBe(true);
-    lim.refund("1.2.3.4");
-    lim.refund("1.2.3.4");
-    expect(lim.allow("1.2.3.4")).toBe(true);
-    expect(lim.allow("1.2.3.4")).toBe(false);
   });
 
   it("accepts a zero or extreme refill rate without an invalid cache ttl", () => {
@@ -44,5 +35,83 @@ describe("clientIp", () => {
   it("falls back to the peer when the trusted header is absent or empty", () => {
     expect(clientIp(req("10.0.0.1"), "x-real-ip")).toBe("10.0.0.1");
     expect(clientIp(req("10.0.0.1", { "x-real-ip": " , " }), "x-real-ip")).toBe("10.0.0.1");
+  });
+});
+
+describe("failure budget and /64 bucketing", () => {
+  it("available() spends nothing, spend() floors at zero", () => {
+    const lim = new IpRateLimiter(0, 3);
+    for (let i = 0; i < 5; i++) expect(lim.available("1.2.3.4")).toBe(true);
+    for (let i = 0; i < 10; i++) lim.spend("1.2.3.4");
+    expect(lim.available("1.2.3.4")).toBe(false);
+    expect(lim.available("5.6.7.8")).toBe(true);
+  });
+
+  it("counts an IPv6 address by its /64, in every method", () => {
+    const lim = new IpRateLimiter(0.001, 2);
+    expect(bucketKey("203.0.113.5")).toBe("203.0.113.5");
+    const key = bucketKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd");
+    expect(bucketKey("2001:DB8:1:2::1")).toBe(key);
+    expect(bucketKey("2001:db8:1:2::")).toBe(key);
+    expect(bucketKey("2001:db8:1:3::1")).not.toBe(key);
+    expect(lim.allow("2001:db8:1:2::1")).toBe(true);
+    expect(lim.allow("2001:db8:1:2:ffff::9")).toBe(true);
+    expect(lim.allow("2001:db8:1:2:1:2:3:4")).toBe(false);
+    expect(lim.allow("2001:db8:1:3::1")).toBe(true);
+    const failures = new IpRateLimiter(0.001, 1);
+    failures.spend("2001:db8:7:7::1");
+    expect(failures.available("2001:db8:7:7:5::2")).toBe(false);
+    expect(failures.available("2001:db8:7:8::2")).toBe(true);
+  });
+
+  it("unmaps IPv4-mapped addresses whatever their case or spelling", () => {
+    expect(bucketKey("::FFFF:203.0.113.5")).toBe("203.0.113.5");
+    expect(bucketKey("::ffff:cb00:7105")).toBe("203.0.113.5");
+    expect(bucketKey("::FFFF:CB00:7105")).toBe("203.0.113.5");
+  });
+
+  it("counts an IPv4-mapped address as its IPv4 client", () => {
+    expect(bucketKey("::ffff:203.0.113.5")).toBe("203.0.113.5");
+    expect(bucketKey("::ffff:203.0.113.5")).not.toBe(bucketKey("::ffff:198.51.100.9"));
+  });
+});
+
+describe("one canonicalizer for header and bucket", () => {
+  const key = (value: string) => bucketKey(clientIp(req("10.0.0.1", { "x-real-ip": value }), "x-real-ip"));
+  it("keeps mapped IPv4 clients distinct, whatever the spelling", () => {
+    const same = ["203.0.113.5", "::ffff:203.0.113.5", "::FFFF:CB00:7105", "::ffff:cb00:7105", "0:0:0:0:0:ffff:cb00:7105", "0:0:0:0:0:ffff:203.0.113.5"];
+    for (const v of same) expect(key(v), v).toBe("203.0.113.5");
+    expect(key("0:0:0:0:0:ffff:cb00:7106")).toBe("203.0.113.6");
+    expect(key("::ffff:cb00:7106")).not.toBe(key("::ffff:cb00:7105"));
+  });
+  it("buckets mixed-form IPv6 by /64", () => {
+    const k = key("2001:db8:1:2::1");
+    expect(k).toBe("2001:db8:1:2::/64");
+    expect(key("2001:db8:1:2:0:0:1.2.3.4")).toBe(k);
+    expect(key("2001:DB8:1:2:ffff:ffff:ffff:ffff")).toBe(k);
+    expect(key("2001:db8:1:3::1")).not.toBe(k);
+  });
+  it("admits equivalent mapped spellings through one bucket, concurrently, and other clients separately", async () => {
+    const lim = new IpRateLimiter(0.001, 3);
+    const spellings = ["203.0.113.5", "::ffff:203.0.113.5", "::FFFF:CB00:7105", "0:0:0:0:0:ffff:cb00:7105", "::ffff:cb00:7105"];
+    const admitted = (await Promise.all(spellings.map(async v => lim.allow(key(v))))).filter(Boolean);
+    expect(admitted).toHaveLength(3);
+    expect(lim.allow(key("0:0:0:0:0:ffff:cb00:7106"))).toBe(true);
+    const v6 = ["2001:db8:1:2::1", "2001:db8:1:2:0:0:1.2.3.4", "2001:db8:1:2:aaaa::1", "2001:db8:1:2::9"];
+    expect((await Promise.all(v6.map(async v => lim.allow(key(v))))).filter(Boolean)).toHaveLength(3);
+  });
+});
+
+describe("address canonicalization is linear in input size", () => {
+  it("handles a huge zone id and a long digit run quickly, with mapped spellings intact", () => {
+    const t0 = performance.now();
+    bucketKey(`fe80::1%${"%".repeat(100_000)}`);
+    bucketKey(`::ffff:1.2.3.${"9".repeat(100_000)}`);
+    bucketKey(`2001:db8::${"9".repeat(100_000)}`);
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(bucketKey("fe80::1%eth0")).toBe("fe80:0:0:0::/64");
+    expect(bucketKey("::ffff:203.0.113.5")).toBe("203.0.113.5");
+    expect(bucketKey("0:0:0:0:0:ffff:203.0.113.5")).toBe("203.0.113.5");
+    expect(bucketKey("2001:db8:1:2:0:0:203.0.113.5")).toBe("2001:db8:1:2::/64");
   });
 });
