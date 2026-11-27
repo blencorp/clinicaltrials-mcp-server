@@ -13,7 +13,7 @@ import { buildCatalog, type CatalogDeps } from "./toolCatalog.js";
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 /** This build's release (the release workflow stamps it). */
-export const SERVER_VERSION = '0.3.0'; // x-release-version
+export const SERVER_VERSION = '0.3.1'; // x-release-version
 
 /** Server-level guidance clients may show the model before it picks a tool. */
 export const SERVER_INSTRUCTIONS = [

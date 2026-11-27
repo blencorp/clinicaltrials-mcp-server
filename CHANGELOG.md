@@ -5,6 +5,12 @@ from `main` (see CONTRIBUTING.md, "Releasing").
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-27
+
+### Fixed
+- refuse a zone id in the trusted client-address header (security)
+- key the rate limiter only on a literal client address from the trusted header (security)
+
 ## [0.3.0] - 2026-11-27
 
 ### Added
@@ -102,7 +108,8 @@ First release. Nothing was published before it; the development line was `0.1.0-
 - The embedded authorization server and HTTP sessions are removed; the transport is stateless.
 - Node 24 or 26 is required (was Node 20.10 and later).
 
-[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/blencorp/clinicaltrials-mcp-server/compare/v0.2.0...v0.2.1
