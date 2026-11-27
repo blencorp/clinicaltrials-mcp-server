@@ -38,7 +38,7 @@ describe("clientIp", () => {
   });
 
   it("falls back to the peer when the trusted header is not a literal address", () => {
-    for (const junk of ["unknown", "evil.example", "1.2.3", "1.2.3.4:80", "<script>", "x".repeat(200)]) {
+    for (const junk of ["unknown", "evil.example", "1.2.3", "1.2.3.4:80", "<script>", "x".repeat(200), "fe80::1%eth0", `fe80::1%${"z".repeat(200)}`]) {
       expect(clientIp(req("10.0.0.1", { "x-real-ip": junk }), "x-real-ip"), junk).toBe("10.0.0.1");
     }
     // IPv4-mapped IPv6 and bracket-free IPv6 are still addresses.
