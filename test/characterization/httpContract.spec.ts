@@ -191,7 +191,7 @@ describe.each([
     await app.close();
   });
 
-  it("/health is {status, version, protocol} with no-store caching and an x-trace-id (H7: timestamp replaced)", async () => {
+  it("/health is {status, protocol, version, commit} with no-store caching and an x-trace-id (H7: timestamp replaced)", async () => {
     const r = await fetch(`${app.base}/health`);
     expect(r.status).toBe(200);
     expect(r.headers.get("content-type")).toBe("application/json; charset=utf-8");

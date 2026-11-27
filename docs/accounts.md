@@ -52,7 +52,7 @@ per-IP limiter. A local checkout without `cd site && pnpm build` and the image c
 
 ## Health check
 
-`GET /health` runs `SELECT 1` against the database: `200 {"status":"ok","protocol":"2026-07-28","sandbox":"deno","version":"0.2.2","commit":"<full SHA>"}`
+`GET /health` runs `SELECT 1` against the database: `200 {"status":"ok","protocol":"2026-07-28","sandbox":"deno","version":"<package version>","commit":"<full SHA>"}`
 (the sandbox kind, `none` if Deno is missing; `version` and `commit` say which release is running, see
 the README's "Docker and Railway" section), or `503 {"status":"unavailable"}` when the database
 does not answer. The base transport's `/health` (`--public-docs`, `--insecure`, OIDC) answers
