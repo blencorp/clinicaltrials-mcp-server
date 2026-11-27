@@ -86,7 +86,7 @@ docker run --rm -p 8080:8080 --env-file account.env <image> --http
 ```
 
 Railway builds the same Dockerfile; its settings are declared in `.railway/railway.ts`. Set
-`CTGOV_PUBLIC_ORIGIN` and `CTGOV_CLIENT_IP_HEADER=x-real-ip`, and use `/health` as the health check.
+`CTGOV_PUBLIC_ORIGIN` and `CTGOV_CLIENT_IP_HEADER=x-real-ip`, and use `/health` as the health check. `GET /health` also reports the running `version` and, on Railway, the `commit` it built (`null` elsewhere).
 The
 [README](https://github.com/blencorp/clinicaltrials-mcp-server/blob/main/README.md#self-hosting-remote-http) walks through it.
 

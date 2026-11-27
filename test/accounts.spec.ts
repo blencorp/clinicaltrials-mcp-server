@@ -18,6 +18,8 @@ import { accountDependencies, publicDependencies, AccountQuota } from '../src/ac
 import { loadAccountConfig, type AccountConfig } from '../src/accounts/config.js';
 import { buildSupervisor, type SupervisorConfig } from '../src/supervisor/index.js';
 import { buildCatalog } from '../src/server/toolCatalog.js';
+import { readBuildInfo } from '../src/server/buildInfo.js';
+import { SERVER_VERSION } from '../src/server/mcpServer.js';
 import { supervisorCfg, CTGOV_ORIGIN, API } from './helpers.js';
 
 const ENV = {
@@ -413,6 +415,17 @@ describe.skipIf(!database)('account HTTP / OAuth with PostgreSQL', () => {
     expect(await status('/mcp')).toBe(421);
     expect(await status('/health')).toBe(200);
     expect(await (await fetch(`${config.origin}/health`)).json()).toMatchObject({ status: 'ok', protocol: '2026-07-28', sandbox: 'deno' });
+  });
+  it('serves /health with the running version and commit, which a request cannot change', async () => {
+    expect(await (await fetch(`${config.origin}/health`)).json()).toEqual({
+      status: 'ok', protocol: '2026-07-28', sandbox: 'deno', version: SERVER_VERSION, commit: null,
+    });
+    // The commit is the platform's, read when the app starts: a replica started with one reports it.
+    const sha = 'c'.repeat(40);
+    await withReplica({ buildInfo: readBuildInfo({ RAILWAY_GIT_COMMIT_SHA: sha }) }, async () => {
+      const r = await fetch(`${config.origin}/health`, { headers: { 'x-railway-git-commit-sha': 'd'.repeat(40) } });
+      expect(await r.json()).toMatchObject({ status: 'ok', version: SERVER_VERSION, commit: sha });
+    });
   });
   it('serves the documentation site at /docs with its own CSP, behind the Host check', async () => {
     const moved = await fetch(`${config.origin}/docs?q=1`, { redirect: 'manual' });
