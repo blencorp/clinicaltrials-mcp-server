@@ -4,6 +4,7 @@
 // port. test/http-integration.spec.ts
 // covers the new security rules (Host, Origin, 405, body cap, auth negatives) and both protocol eras.
 import { SERVER_VERSION } from "../../src/server/mcpServer.js";
+import { readBuildInfo } from "../../src/server/buildInfo.js";
 import { REPOSITORY_URL } from "../../src/project.js";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -170,6 +171,12 @@ describe("authenticated mode: 401/403 challenges and well-known documents", () =
     expect((await fetch(`${app.base}/healthz`)).status).toBe(404);
     expect((await fetch(`${app.base}/readyz`)).status).toBe(404);
   });
+
+  it("/health answers without a token with the version and commit (OIDC mode)", async () => {
+    const r = await fetch(`${app.base}/health`);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ status: "ok", protocol: "2026-07-28", version: SERVER_VERSION, commit: null });
+  });
 });
 
 describe.each([
@@ -190,7 +197,19 @@ describe.each([
     expect(r.headers.get("content-type")).toBe("application/json; charset=utf-8");
     expect(r.headers.get("cache-control")).toBe("no-store");
     expect(r.headers.get("x-trace-id")).toMatch(/^[0-9a-f-]{36}$/);
-    expect(await r.json()).toEqual({ status: "ok", version: SERVER_VERSION, protocol: "2026-07-28" });
+    // The commit is the platform's (none in a local run); `commit` was added to the pin on purpose.
+    expect(await r.json()).toEqual({ status: "ok", protocol: "2026-07-28", version: SERVER_VERSION, commit: null });
+  });
+
+  it("/health reports the commit read from the platform environment at startup, never one a request supplies", async () => {
+    const sha = "a".repeat(40);
+    const stamped = await start({ ...opts, buildInfo: readBuildInfo({ RAILWAY_GIT_COMMIT_SHA: sha }) });
+    try {
+      const r = await fetch(`${stamped.base}/health`, { headers: { "x-railway-git-commit-sha": "b".repeat(40), "x-commit": "c".repeat(40) } });
+      expect(await r.json()).toEqual({ status: "ok", protocol: "2026-07-28", version: SERVER_VERSION, commit: sha });
+    } finally {
+      await stamped.close();
+    }
   });
 
   it("/healthz and /readyz are removed (H7)", async () => {

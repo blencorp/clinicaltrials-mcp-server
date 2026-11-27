@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { buildMcpServer, MCP_PROTOCOL_VERSION } from '../server/mcpServer.js';
+import { readBuildInfo, type BuildInfo } from '../server/buildInfo.js';
 import type { CatalogDeps } from '../server/toolCatalog.js';
 import type { AccountConfig } from './config.js';
 import { type Store } from './store.js';
@@ -180,8 +181,11 @@ export async function createAccountApp(
     maxTokenChecksInFlight?: number;
     /** Reads the clock for token issue and admission; tests control it. */
     now?: () => number;
+    /** What `/health` reports as running; bin.ts reads it from the platform environment at startup. Omitted: this version with no commit. */
+    buildInfo?: BuildInfo;
   } = {},
 ): Promise<{ app: express.Express; auth: Auth; mcp: ReturnType<typeof createMcpHandler>; close: () => Promise<void> }> {
+  const buildInfo = options.buildInfo ?? readBuildInfo({});
   const app = express();
   app.disable('x-powered-by');
   // Railway terminates TLS at one trusted proxy hop.
@@ -278,6 +282,7 @@ export async function createAccountApp(
       res.json({
         status: 'ok',
         protocol: MCP_PROTOCOL_VERSION, sandbox: deps.sandbox?.kind ?? 'none',
+        ...buildInfo,
       });
     } catch {
       res.status(503).json({ status: 'unavailable' });

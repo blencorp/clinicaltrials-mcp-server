@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { startStdioServer } from "./server/stdio.js";
+import { readBuildInfo } from "./server/buildInfo.js";
 import { startHttpServer, type HttpServerOptions } from "./server/http.js";
 import { DEFAULT_SCOPE, type AuthProvider } from "./server/authz.js";
 import { SERVER_VERSION } from "./server/mcpServer.js";
@@ -149,6 +150,7 @@ function httpOptions(args: ParsedArgs, env: NodeJS.ProcessEnv): HttpServerOption
     host: args.host,
     sandboxMode: args.sandbox,
     supervisor: supervisorConfig(env),
+    buildInfo: readBuildInfo(env),
     insecure: args.insecure,
     publicDocs: args.publicDocs,
     publicOrigin: env.CTGOV_PUBLIC_ORIGIN?.trim() || undefined,
@@ -197,7 +199,7 @@ async function main(): Promise<void> {
     const { startAccountHttp } = await import("./accounts/runtime.js");
     const handle = await startAccountHttp({
       port: args.port, host: args.host, config: loadAccountConfig(env),
-      sandboxMode: args.sandbox, supervisor: supervisorConfig(env),
+      sandboxMode: args.sandbox, supervisor: supervisorConfig(env), buildInfo: readBuildInfo(env),
     });
     onShutdown(handle.close);
     return;

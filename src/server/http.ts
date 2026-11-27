@@ -13,7 +13,8 @@ import { logger } from "../util/logger.js";
 import { AuthConfigError, InsufficientScopeError, buildVerifier, type AuthConfig } from "./authz.js";
 import { DOCS_PATH, docsRoute, isPublicPortalPath, publicPortalRoute } from "../accounts/docs.js";
 import { IpRateLimiter, bucketKey, clientIp } from "./ipRateLimiter.js";
-import { MCP_PROTOCOL_VERSION, SERVER_VERSION, buildMcpServer } from "./mcpServer.js";
+import { MCP_PROTOCOL_VERSION, buildMcpServer } from "./mcpServer.js";
+import { readBuildInfo, type BuildInfo } from "./buildInfo.js";
 import {
   RESOURCE_METADATA_PATH,
   RESOURCE_METADATA_ROOT_PATH,
@@ -78,6 +79,8 @@ export interface HttpServerOptions {
   dispatcher?: Dispatcher;
   /** Prebuilt dependencies (tests); the caller then owns the sandbox and the shutdown signal. */
   deps?: CatalogDeps;
+  /** What `/health` reports as running; bin.ts reads it from the platform environment at startup. Omitted: this version with no commit. */
+  buildInfo?: BuildInfo;
 }
 
 export interface HttpHandle {
@@ -177,6 +180,7 @@ function corsHeaders(allowOrigin: string): Record<string, string> {
 
 export async function startHttpServer(opts: HttpServerOptions = {}): Promise<HttpHandle> {
   const { insecure = false, publicDocs = false } = opts;
+  const buildInfo = opts.buildInfo ?? readBuildInfo({});
   const auth: AuthConfig = opts.auth ?? { provider: "none" };
   if (insecure && publicDocs) throw new Error("--insecure and --public-docs are mutually exclusive");
   if ((insecure || publicDocs) && auth.provider !== "none") {
@@ -300,7 +304,7 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
       // Platform health probes cannot be given a trusted Host (Railway sends
       // `Host: healthcheck.railway.app`), and the endpoint serves no user data.
       if (req.method === "GET" && url.pathname === HEALTH_PATH) {
-        reply(res, 200, { status: "ok", version: SERVER_VERSION, protocol: MCP_PROTOCOL_VERSION });
+        reply(res, 200, { status: "ok", protocol: MCP_PROTOCOL_VERSION, ...buildInfo });
         return;
       }
 

@@ -219,7 +219,7 @@ sign-in, dynamic client registration or CIMD, S256 PKCE) over PostgreSQL, serves
 (`/api/portal/*`), two MCP endpoints (`/mcp` for the documentation tools, `/mcp/account` for all three
 behind a bearer token), `/.well-known/oauth-protected-resource/mcp` and
 `/.well-known/oauth-authorization-server`, and `/docs`. It keeps per-account quotas in PostgreSQL,
-and its `/health` runs a database check. [accounts.md](./accounts.md) is the full guide.
+and its `/health` runs a database check (and reports `version` and `commit` like the base transport). [accounts.md](./accounts.md) is the full guide.
 
 ### Portal and documentation site
 
