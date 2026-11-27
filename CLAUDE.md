@@ -154,6 +154,6 @@ Each line names the file that enforces the rule and the test that pins it.
 - OAuth redirect URIs with credentials or fragments are rejected: `src/accounts/app.ts`; `test/accounts.spec.ts` ("rejects unsafe origins, short secrets, bad quotas and unsafe OAuth redirects").
 - Never Origin-allowlist the bearer endpoint `/mcp/account` (hosted connectors send their own `Origin`); only the anonymous `/mcp` refuses foreign origins: `src/accounts/app.ts`; `test/accounts.spec.ts` ("rejects unverified accounts, foreign browser origins, ...; serves hosted connectors...").
 - Hosted HTTP runs user code only in the hardened Deno runner, never in-process: `src/sandbox/index.ts` (`pickSandbox`), `src/server/http.ts`, `src/accounts/runtime.ts` (both set `processIsolation`); `test/sandbox.spec.ts` ("never runs user code in-process for multi-user HTTP serving").
-- Sensitive responses are `no-store`; only fingerprinted `/assets/*` may be cached immutably: `src/accounts/app.ts`, `src/accounts/docs.ts`; `test/docs.spec.ts` (docs error path; the `app.ts` header has no test yet).
+- Sensitive responses are `no-store`; only fingerprinted static bundles (`/assets/*` in the portal, `/docs/_astro/*` in the docs site) may be cached immutably, and docs pages are public for five minutes: `src/accounts/app.ts`, `src/accounts/docs.ts`; `test/docs.spec.ts` (docs error path; the `app.ts` header has no test yet).
 
 A change to any of these is a security change: port it to the sibling servers (uspto, fedreg, datagov, samgov, capture) or record why it does not apply.
