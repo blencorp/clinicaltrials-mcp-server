@@ -142,3 +142,18 @@ stdio | Streamable HTTP (+OAuth, Host/Origin, per-IP bucket, quotas) | accounts 
 ## Docs
 
 `docs/architecture.md` (layered design and security boundaries), `docs/sdk-reference.md` (search syntax, identifiers, errors, and the generated `ctgov` method reference), `docs/accounts.md` (account mode, portal API, limits), and `docs/accessibility.md` are the deep references. `site/` is the public documentation site (Astro Starlight, base `/docs`; its own pnpm root and lockfile; `cd site && pnpm build`). `deploy/Dockerfile` builds it into `docs-site/` (a sibling of `dist/`, so the npm package never ships it) and the hosted server serves it at `/docs` in `--public-docs` and account modes (`src/accounts/docs.ts`). Its SDK reference page is `docs/sdk-reference.md` copied in at build time and its recipes read `examples/*.js`, so edit those sources. `legal/` holds the hosted-service policies bundled into the portal. `pnpm check:directory <base-url>` smoke-tests a deployment against the connector directory's requirements.
+
+## Security invariants
+
+Each line names the file that enforces the rule and the test that pins it.
+
+- A bearer token is admitted by its `at1` MAC before the failed-token budget and before any database lookup; anything not in that format is refused: `src/accounts/token-admission.ts`, `src/accounts/app.ts`; `test/token-admission.spec.ts`, `test/accounts.spec.ts` ("junk in the authenticated format is refused before any database work...").
+- Token and revoke requests are budgeted per client address before any lookup or lock: `src/accounts/app.ts`; `test/accounts.spec.ts` ("limits /oauth2/token and /oauth2/revoke per client address...").
+- The client address comes only from the configured trusted header (`CTGOV_CLIENT_IP_HEADER`): a literal IP, no zone id, rightmost entry of a list, else the TCP peer; IPv6 is counted per /64 and IPv4-mapped addresses are unmapped; never an untrusted `x-forwarded-for`; known gap: with no header configured, `ipOf` in account mode falls back to Express `req.ip` instead of the peer: `src/server/ipRateLimiter.ts`, `src/accounts/app.ts` (`ipOf`); `test/ipRateLimiter.spec.ts`.
+- Lock targets are parsed with Better Auth's own runtime parser (`Request.formData()`), never a hand-rolled one: `src/accounts/app.ts` (`lockTarget`); `test/accounts.spec.ts` ("leading-? bodies take the lock the real parser gives them...").
+- OAuth redirect URIs with credentials or fragments are rejected: `src/accounts/app.ts`; `test/accounts.spec.ts` ("rejects unsafe origins, short secrets, bad quotas and unsafe OAuth redirects").
+- Never Origin-allowlist the bearer endpoint `/mcp/account` (hosted connectors send their own `Origin`); only the anonymous `/mcp` refuses foreign origins: `src/accounts/app.ts`; `test/accounts.spec.ts` ("rejects unverified accounts, foreign browser origins, ...; serves hosted connectors...").
+- Hosted HTTP runs user code only in the hardened Deno runner, never in-process: `src/sandbox/index.ts` (`pickSandbox`), `src/server/http.ts`, `src/accounts/runtime.ts` (both set `processIsolation`); `test/sandbox.spec.ts` ("never runs user code in-process for multi-user HTTP serving").
+- Sensitive responses are `no-store`; only fingerprinted static bundles (`/assets/*` in the portal, `/docs/_astro/*` in the docs site) may be cached immutably, and docs pages are public for five minutes: `src/accounts/app.ts`, `src/accounts/docs.ts`; `test/docs.spec.ts` (docs error path; the `app.ts` header has no test yet).
+
+A change to any of these is a security change: port it to the sibling servers (uspto, fedreg, datagov, samgov, capture) or record why it does not apply.
