@@ -4,6 +4,7 @@ import type { Dispatcher } from 'undici';
 import { buildSupervisor, resolveSupervisorConfig, type SupervisorConfig } from '../supervisor/index.js';
 import type { CatalogDeps } from '../server/toolCatalog.js';
 import type { HttpHandle } from '../server/http.js';
+import type { BuildInfo } from '../server/buildInfo.js';
 import type { SandboxKind } from '../sandbox/types.js';
 import type { SubjectLimiter } from '../util/quotas.js';
 import { logger } from '../util/logger.js';
@@ -47,6 +48,8 @@ export interface AccountServerOptions {
   sandboxMode?: SandboxKind;
   supervisor?: Partial<SupervisorConfig>;
   dispatcher?: Dispatcher;
+  /** What `/health` reports as running (bin.ts reads it from the platform environment). */
+  buildInfo?: BuildInfo;
 }
 
 export async function startAccountHttp(opts: AccountServerOptions): Promise<HttpHandle> {
@@ -72,6 +75,7 @@ export async function startAccountHttp(opts: AccountServerOptions): Promise<Http
     await store.initialize();
     service = await createAccountApp(
       config, store, accountDependencies(deps, store, cfg.subjectRatePerHour), publicDependencies(deps),
+      { buildInfo: opts.buildInfo },
     );
     const server = createServer(service.app);
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(opts.port, opts.host, resolve); });
