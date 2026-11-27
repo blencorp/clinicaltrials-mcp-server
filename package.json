@@ -1,6 +1,6 @@
 {
   "name": "@blen/clinicaltrials-mcp-server",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Code-mode MCP server for the ClinicalTrials.gov API: search_api, describe_schema and a sandboxed execute over the ctgov SDK. Unaffiliated with NIH/NLM.",
   "license": "Apache-2.0",
   "author": "BLEN, Inc. (https://blenlabs.com)",
