@@ -36,6 +36,15 @@ describe("clientIp", () => {
     expect(clientIp(req("10.0.0.1"), "x-real-ip")).toBe("10.0.0.1");
     expect(clientIp(req("10.0.0.1", { "x-real-ip": " , " }), "x-real-ip")).toBe("10.0.0.1");
   });
+
+  it("falls back to the peer when the trusted header is not a literal address", () => {
+    for (const junk of ["unknown", "evil.example", "1.2.3", "1.2.3.4:80", "<script>", "x".repeat(200)]) {
+      expect(clientIp(req("10.0.0.1", { "x-real-ip": junk }), "x-real-ip"), junk).toBe("10.0.0.1");
+    }
+    // IPv4-mapped IPv6 and bracket-free IPv6 are still addresses.
+    expect(clientIp(req("10.0.0.1", { "x-real-ip": "::ffff:203.0.113.8" }), "x-real-ip")).toBe("203.0.113.8");
+    expect(clientIp(req("10.0.0.1", { "x-real-ip": "2001:db8::1" }), "x-real-ip")).toBe("2001:db8::1");
+  });
 });
 
 describe("per-IP budget and /64 bucketing", () => {
